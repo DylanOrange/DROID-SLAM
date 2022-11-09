@@ -10,7 +10,7 @@ from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
 from lietorch import SE3
-from geom.ba import BA
+from geom.ba import BA, dynamicBA
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
@@ -169,8 +169,11 @@ class DroidNet(nn.Module):
         return fmaps, net, inp
 
 
-    def forward(self, Gs, images, disps, intrinsics, graph=None, num_steps=12, fixedp=2):
+    def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disps, depth, intrinsics, trackinfo, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
+        
+        # ObjectGs = ObjectGs[0]
+        objectmasks = objectmasks[0]
 
         u = keyframe_indicies(graph)
         ii, jj, kk = graph_to_edge_list(graph)
@@ -185,12 +188,18 @@ class DroidNet(nn.Module):
         ht, wd = images.shape[-2:]
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
         
-        coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+        validmasklist = []
+        for n in range(len(trackinfo['trackid'][0])):
+            validmasklist.append(torch.isin(ii, trackinfo['apperance'][n][0]) & torch.isin(jj, trackinfo['apperance'][n][0]))
+        validmask = torch.stack(validmasklist, dim=0)
+
+        coords1, _ = pops.dyprojective_transform(Gs, depth, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
         target = coords1.clone()
 
-        Gs_list, disp_list, residual_list = [], [], []
+        Gs_list, disp_list, residual_list, ObjectGs_list = [], [], [], []
         for step in range(num_steps):
             Gs = Gs.detach()
+            ObjectGs = ObjectGs.detach()
             disps = disps.detach()
             coords1 = coords1.detach()
             target = target.detach()
@@ -207,16 +216,18 @@ class DroidNet(nn.Module):
                 self.update(net, inp, corr, motion, ii, jj)
 
             target = coords1 + delta
+            target2, weight = pops.dyprojective_transform(Ps, depth, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
             for i in range(2):
-                Gs, disps = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, depth, intrinsics, ii, jj, fixedp=2)
 
-            coords1, valid_mask = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+            coords1, valid_mask = pops.dyprojective_transform(Gs, depth, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             residual = (target - coords1)
 
             Gs_list.append(Gs)
-            disp_list.append(upsample_disp(disps, upmask))
+            ObjectGs_list.append(ObjectGs)
+            disp_list.append(disps)
             residual_list.append(valid_mask * residual)
 
 
-        return Gs_list, disp_list, residual_list
+        return Gs_list, ObjectGs_list, disp_list, residual_list

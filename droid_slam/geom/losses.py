@@ -27,19 +27,30 @@ def fit_scale(Ps, Gs):
     return s
 
 
-def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True):
+def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True, object = False, trackinfo = None):
     """ Loss function for training network """
 
     # relative pose
+    # Ps = Ps.inv()
     ii, jj, kk = graph_to_edge_list(graph)
     dP = Ps[:,jj] * Ps[:,ii].inv()
+
+    if object == True:
+        validmasklist = []
+        for n in range(len(trackinfo['trackid'][0])):
+            validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
+        validmask = torch.stack(validmasklist, dim=0)
+        dP = dP[validmask]
 
     n = len(Gs)
     geodesic_loss = 0.0
 
     for i in range(n):
+        # Gs[i] = Gs[i].inv()
         w = gamma ** (n - i - 1)
         dG = Gs[i][:,jj] * Gs[i][:,ii].inv()
+        if object == True:
+            dG = dG[validmask]
 
         if do_scale:
             s = fit_scale(dP, dG)
@@ -64,12 +75,20 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True):
         dE = Sim3(dG * dP.inv()).detach()
         r_err, t_err, s_err = pose_metrics(dE)
 
-    metrics = {
-        'rot_error': r_err.mean().item(),
-        'tr_error': t_err.mean().item(),
-        'bad_rot': (r_err < .1).float().mean().item(),
-        'bad_tr': (t_err < .01).float().mean().item(),
-    }
+    if object == False:
+        metrics = {
+            'rot_error': r_err.mean().item(),
+            'tr_error': t_err.mean().item(),
+            'bad_rot': (r_err < .1).float().mean().item(),
+            'bad_tr': (t_err < .01).float().mean().item(),
+        } 
+    else:
+        metrics = {
+            'ob_rot_error': r_err.mean().item(),
+            'ob_tr_error': t_err.mean().item(),
+            'ob_bad_rot': (r_err < .1).float().mean().item(),
+            'ob_bad_tr': (t_err < .01).float().mean().item(),
+        }
 
     return geodesic_loss, metrics
 

@@ -137,3 +137,83 @@ def induced_flow(poses, disps, intrinsics, ii, jj):
 
     return coords1[...,:2] - coords0, valid
 
+def dyactp(Gij, X0, Gijobject = None, objectmask = None, fullmask  = None, jacobian = False):
+    """ action on point cloud """
+    #X0: 1,12,30,101,4
+    #objectmask: 2,12,30,101
+    static = (1-fullmask)[..., None] #2,12,30,101,1
+    cam_motion = Gij[:, :, None, None] * X0 #1,12,1,1,7 * 1,12,30,101,4
+    cam_filtered = static * cam_motion#2,12,30,101,4
+
+    ob_motion = Gijobject[:, :, None, None] * X0 #2,12,1,1,7* 1,12,30,101,4 ->2,12,30,101,4
+    ob_filtered = torch.sum(objectmask[..., None]*ob_motion, dim = 0, keepdim= True)
+    X1 = cam_filtered+ob_filtered
+
+    # X1 = Gij[:, :, None, None] * X0
+    if jacobian:
+        X, Y, Z, d = X1.unbind(dim=-1)#2,12,30,101,4
+        o = torch.zeros_like(d)
+        B, N, H, W = d.shape
+
+        J1 = torch.stack([
+            d,  o,  o,  o,  Z, -Y,
+            o,  d,  o, -Z,  o,  X,
+            o,  o,  d,  Y, -X,  o,
+            o,  o,  o,  o,  o,  o,
+        ], dim=-1).view(B, N, H, W, 4, 6)
+        
+        return X1, J1
+
+    return X1, None
+
+def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, objectposes = None, objectmask = None, Jacobian = False, return_depth = False):
+    """ map points from ii->jj """
+    
+    #输入前面都有Batch 1，除了Objectmask
+    X0, Jz = iproj(depths[:, ii], intrinsics[:, ii], jacobian = Jacobian)#1,2,30,101,4
+
+    # transform: both pose i and j are w2c
+    Gij = poses[:, jj] * poses[:, ii].inv()
+    # print(Gij.data)
+    Gij.data[:, ii == jj] = torch.as_tensor(
+        [-0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device)
+
+    validobjectmask = objectmask[:, ii]*validmask[..., None, None]#2,12,30,101
+    # objectmask = objectmask[:, ii]#2,12,30,101
+    fullmask = torch.sum(objectmask[:, ii], dim = 0, keepdim = True)
+    Gijobject =  poses[:, jj] * objectposes[:, jj].inv() * objectposes[:, ii] * poses[:, ii].inv()#2,12,1
+    Gjj = poses[:, jj] * objectposes[:, jj].inv()#2,12,1
+    Gijobject.data[:, ii == jj] = torch.as_tensor(
+        [-0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device) 
+
+    #X1, with object X2, without object
+    X1, J1 = dyactp(Gij, X0, Gijobject = Gijobject, objectmask = validobjectmask, fullmask = fullmask, jacobian = Jacobian)
+
+    # project (pinhole)
+    x1, Jp1 = proj(X1, intrinsics[:, jj], jacobian=Jacobian, return_depth=return_depth)
+
+    # exclude points too close to camera
+    valid = ((X1[..., 2] > MIN_DEPTH) & (X0[..., 2] > MIN_DEPTH)).float()
+    valid = valid.unsqueeze(-1)
+
+    if Jacobian:
+        # Ji transforms according to dual adjoint
+        Jcj = torch.matmul(Jp1, J1)#2,12,30,101,2,6
+        Jci = -Gij[:, :, None, None, None].adjT(Jcj)
+
+        Jcoi = -Gijobject[:, :, None, None, None].adjT(Jcj)
+
+        Jci = torch.sum(Jcoi*validobjectmask[..., None, None], dim=0, keepdim=True) + Jci*(1-fullmask[..., None, None])
+
+        Joi = Gjj[:, :, None, None, None].adjT(Jcj)
+        Joj = -Joi
+
+        Joi = Joi*validobjectmask[..., None, None]
+        Joj = Joj*validobjectmask[..., None, None]
+
+        Jz = torch.sum((Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None], dim = 0, keepdim=True) + (Gij[:, :, None, None] * Jz) * (1 - fullmask[..., None])
+        Jz = torch.matmul(Jp1, Jz.unsqueeze(-1))
+
+        return x1, valid, (Jci, Jcj, Joi, Joj, Jz)
+
+    return x1, valid

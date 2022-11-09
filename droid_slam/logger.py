@@ -3,7 +3,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 
-SUM_FREQ = 100
+SUM_FREQ = 20
 
 class Logger:
     def __init__(self, name, scheduler):
