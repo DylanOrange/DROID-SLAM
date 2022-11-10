@@ -15,6 +15,8 @@ import os.path as osp
 
 from .augmentation import RGBDAugmentor
 from .rgbd_utils import *
+from torch_scatter import scatter_sum
+NCAR = 135
 
 class RGBDDataset(data.Dataset):
     def __init__(self, name, datapath, n_frames=4, crop_size=[384,512], fmin=8.0, fmax=75.0, do_aug=True):
@@ -53,7 +55,7 @@ class RGBDDataset(data.Dataset):
             if not self.__class__.is_test_scene(scene):
                 graph = self.scene_info[scene]['graph']
                 for i in graph:
-                    if len(graph[i][0]) > self.n_frames:
+                    if len(graph[i][0]) > 0:
                         self.dataset_index.append((scene, i))
             else:
                 print("Reserving {} for validation".format(scene))
@@ -65,6 +67,57 @@ class RGBDDataset(data.Dataset):
     @staticmethod
     def depth_read(depth_file):
         return np.load(depth_file)
+    
+    @staticmethod
+    def trackinfo(objectmasks, inds):
+        framenumber = len(inds)
+        count = [torch.tensor([0])]
+        trackidlist = []
+        area = torch.zeros(NCAR).long()
+        for i in range(framenumber):
+            arearank = torch.bincount(objectmasks[i]. flatten())
+            area += scatter_sum(arearank, torch.arange(arearank.shape[0]), dim = 0, dim_size= NCAR)
+            valid = arearank[arearank!=0].shape[0]
+            count.append(count[-1]+valid)
+            trackidlist.append(torch.argsort(arearank)[-valid:])
+
+        trackid = torch.concat(trackidlist)
+        arearank = torch.argsort(area)
+        fre = torch.bincount(trackid)
+        frerank = torch.where(fre == torch.amax(fre))[0]
+        TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))#找出出现频率最大的几辆车
+        if TRACKID.shape[0] > 8:
+            TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-8:]))
+        if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
+            frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1])))[0]
+            TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
+            if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
+                frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1,torch.amax(fre)-2])))[0]
+                TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
+        TRACKID = TRACKID[TRACKID!=0]-1
+        
+        bins = torch.concat(count)
+        Apperance = []
+        N_app = 0
+        for id in TRACKID:
+            ids = torch.nonzero(trackid == id+1).squeeze(-1)
+            frames = torch.bucketize(ids,bins,right =True)-1
+            N_app += len(frames)
+            Apperance.append(frames)
+
+        # print('trackid is {}'.format(TRACKID))
+        # print('appear is {}'.format(Apperance))
+        # print('frames are {}'.format(inds))
+        return TRACKID, N_app, Apperance
+
+    @staticmethod
+    def construct_objectmask(TRACKID, mask):
+        single_masklist = []
+        for id in TRACKID:
+            single_mask = torch.where(mask == (id+1), 1.0, 0.0)
+            sampled_mask = torch.nn.functional.interpolate(single_mask.unsqueeze(1), size = (30,101)).int()
+            single_masklist.append(sampled_mask.squeeze(1))
+        return torch.stack(single_masklist, dim = 0)
 
     def build_frame_graph(self, poses, depths, intrinsics, f=16, max_flow=256):
         """ compute optical flow distance between all pairs of frames """
@@ -100,54 +153,107 @@ class RGBDDataset(data.Dataset):
         frame_graph = self.scene_info[scene_id]['graph']
         images_list = self.scene_info[scene_id]['images']
         depths_list = self.scene_info[scene_id]['depths']
+        objectmasks_list = self.scene_info[scene_id]['objectmasks']
         poses_list = self.scene_info[scene_id]['poses']
         intrinsics_list = self.scene_info[scene_id]['intrinsics']
 
-        inds = [ ix ]
-        while len(inds) < self.n_frames:
+        # inds = [ ix ]
+        # while len(inds) < self.n_frames:
             # get other frames within flow threshold
-            k = (frame_graph[ix][1] > self.fmin) & (frame_graph[ix][1] < self.fmax)
-            frames = frame_graph[ix][0][k]
 
-            # prefer frames forward in time
-            if np.count_nonzero(frames[frames > ix]):
-                ix = np.random.choice(frames[frames > ix])
+        step = 5
+        if 20<=ix<=810:
+            inds = [ix-2*step, ix-step, ix, ix+step, ix+2*step]
+        elif ix<20:
+            inds = [ix, ix+step, ix+2*step, ix+3*step, ix+4*step]
+        else:
+            inds = [ix-4*step, ix-3*step, ix-2*step, ix-step, ix]
+        
+        inds =np.sort(inds)
+        # k = (frame_graph[ix][1] > self.fmin) & (frame_graph[ix][1] < self.fmax)
+        # frames = frame_graph[ix][0][k]
+
+        # while(1):
+        #     if len(frames) < self.n_frames-1:
+        #         inds = np.random.choice(frame_graph[ix][0], self.n_frames -1, replace = False)
+        #     else:
+        #         inds = np.random.choice(frame_graph[ix][0][k], self.n_frames -1, replace = False)
             
-            elif np.count_nonzero(frames):
-                ix = np.random.choice(frames)
+        #     inds = np.sort(np.append(ix, inds))
+        #     if (len(np.unique(inds)) == len(inds)):
+        #         break
+        
+            # prefer frames forward in time
+            # if np.count_nonzero(frames[frames > ix]):
+            #     ix = np.random.choice(frames[frames > ix])
+            
+            # elif np.count_nonzero(frames):
+            #     ix = np.random.choice(frames)
 
-            inds += [ ix ]
+            # print('ix is {}'.format(ix))
+            # print(['inds are {}'.format(inds)])
+            # if np.isin(ix, inds) == False:
+            #     inds += [ ix ]
 
-        images, depths, poses, intrinsics = [], [], [], []
+        # for i in range(1, self.n_frames):
+        #     inds.append(ix + 5*i)
+
+        #读取mask并确定要追踪的车的id
+        images, depths, poses, intrinsics, objectmasks = [], [], [], [], []
         for i in inds:
             images.append(self.__class__.image_read(images_list[i]))
             depths.append(self.__class__.depth_read(depths_list[i]))
+            objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i]))
             poses.append(poses_list[i])
             intrinsics.append(intrinsics_list[i])
 
         images = np.stack(images).astype(np.float32)
+        objectmasks = np.stack(objectmasks).astype(np.float32)
         depths = np.stack(depths).astype(np.float32)
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
         images = torch.from_numpy(images).float()
-        images = images.permute(0, 3, 1, 2)
+        # images = images.permute(0, 3, 1, 2)
 
         disps = torch.from_numpy(1.0 / depths)
         poses = torch.from_numpy(poses)
+        objectmasks = torch.from_numpy(objectmasks).int()
         intrinsics = torch.from_numpy(intrinsics)
+        intrinsics[:, 0:2] *= (101/ 1242)
+        intrinsics[:, 2:4] *= (30/ 375)
 
-        if self.aug is not None:
-            images, poses, disps, intrinsics = \
-                self.aug(images, poses, disps, intrinsics)
+        # if self.aug is not None:
+        #     images, objectmasks, poses, disps, intrinsics = \
+        #             self.aug(images, objectmasks, poses, disps, intrinsics)
+
+        TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)
+
+        for n, idx in enumerate(inds):
+            vis_image = images[n].clone()
+            vis_image[torch.isin(objectmasks[n], TRACKID+1)] = torch.tensor([255.0,255.0,255.0])
+            cv2.imwrite('./visualize/mask'+str(idx)+'.png', np.array(vis_image))
+
+        images = images.permute(0, 3, 1, 2)
+        images = torch.nn.functional.interpolate(images, size = (240,808))
+
+        objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance).float()
+        objectmasks = self.construct_objectmask(TRACKID, objectmasks)
+
+        trackinfo = {
+            'trackid': TRACKID.to('cuda'),
+            'apperance': [x.to('cuda') for x in Apperance],
+            'n_app': N_app,
+            'frames': inds,
+        }
 
         # scale scene
-        if len(disps[disps>0.01]) > 0:
-            s = disps[disps>0.01].mean()
-            disps = disps / s
-            poses[...,:3] *= s
+        # if len(disps[disps>0.01]) > 0:
+        #     s = disps[disps>0.01].mean()
+        #     disps = disps / s
+        #     poses[...,:3] *= s
 
-        return images, poses, disps, intrinsics 
+        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), intrinsics.to('cuda'), trackinfo
 
     def __len__(self):
         return len(self.dataset_index)

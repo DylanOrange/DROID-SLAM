@@ -50,7 +50,6 @@ def schur_solve(H, E, C, v, w, ep=0.1, lm=0.0001, sless=False):
     H = H.permute(0,1,3,2,4).reshape(B, P*D, P*D)
     E = E.permute(0,1,3,2,4).reshape(B, P*D, M*HW)
     Q = (1.0 / C).view(B, M*HW, 1)
-
     # damping
     I = torch.eye(P*D).to(H.device)
     H = H + (ep + lm*H) * I
@@ -62,9 +61,12 @@ def schur_solve(H, E, C, v, w, ep=0.1, lm=0.0001, sless=False):
     S = H - torch.matmul(E, Q*Et)
     v = v - torch.matmul(E, Q*w)
 
-    dx = CholeskySolver.apply(S, v)
-    if sless:
-        return dx.reshape(B, P, D)
+    sinv = torch.linalg.inv(S)
+    dx = torch.matmul(sinv, v)
+
+    # dx = CholeskySolver.apply(S, v)
+    # if sless:
+    #     return dx.reshape(B, P, D)
 
     dz = Q * (w - Et @ dx)    
     dx = dx.reshape(B, P, D)

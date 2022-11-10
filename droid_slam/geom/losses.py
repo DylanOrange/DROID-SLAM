@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from lietorch import SO3, SE3, Sim3
 from .graph_utils import graph_to_edge_list
-from .projective_ops import projective_transform
+from .projective_ops import projective_transform, dyprojective_transform
 
 
 def pose_metrics(dE):
@@ -27,19 +27,30 @@ def fit_scale(Ps, Gs):
     return s
 
 
-def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True):
+def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True, object = False, trackinfo = None):
     """ Loss function for training network """
 
     # relative pose
+    # Ps = Ps.inv()
     ii, jj, kk = graph_to_edge_list(graph)
     dP = Ps[:,jj] * Ps[:,ii].inv()
+
+    if object == True:
+        validmasklist = []
+        for n in range(len(trackinfo['trackid'][0])):
+            validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
+        validmask = torch.stack(validmasklist, dim=0)
+        dP = dP[validmask]
 
     n = len(Gs)
     geodesic_loss = 0.0
 
     for i in range(n):
+        # Gs[i] = Gs[i].inv()
         w = gamma ** (n - i - 1)
         dG = Gs[i][:,jj] * Gs[i][:,ii].inv()
+        if object == True:
+            dG = dG[validmask]
 
         if do_scale:
             s = fit_scale(dP, dG)
@@ -64,12 +75,26 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True):
         dE = Sim3(dG * dP.inv()).detach()
         r_err, t_err, s_err = pose_metrics(dE)
 
-    metrics = {
-        'rot_error': r_err.mean().item(),
-        'tr_error': t_err.mean().item(),
-        'bad_rot': (r_err < .1).float().mean().item(),
-        'bad_tr': (t_err < .01).float().mean().item(),
-    }
+    if object == False:
+        metrics = {
+            'rot_error': r_err.mean().item(),
+            'tr_error': t_err.mean().item(),
+            'bad_rot': (r_err < .1).float().mean().item(),
+            'bad_tr': (t_err < .01).float().mean().item(),
+        } 
+    else:
+        metrics = {
+            'ob_rot_error': r_err.mean().item(),
+            'ob_tr_error': t_err.mean().item(),
+            'ob_bad_rot': (r_err < .1).float().mean().item(),
+            'ob_bad_tr': (t_err < .01).float().mean().item(),
+        }
+        if geodesic_loss>0.5:
+            print(geodesic_loss)
+            print(trackinfo['trackid'])
+            print(trackinfo['frames'])
+            print(Ps.data)
+            print(Gs[0].data)
 
     return geodesic_loss, metrics
 
@@ -86,7 +111,7 @@ def residual_loss(residuals, gamma=0.9):
     return residual_loss, {'residual': residual_loss.item()}
 
 
-def flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph, gamma=0.9):
+def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, trackinfo, intrinsics, graph, gamma=0.9):
     """ optical flow loss """
 
     N = Ps.shape[1]
@@ -95,7 +120,13 @@ def flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph, gamma=0.9):
         graph[i] = [j for j in range(N) if abs(i-j)==1]
 
     ii, jj, kk = graph_to_edge_list(graph)
-    coords0, val0 = projective_transform(Ps, disps, intrinsics, ii, jj)
+
+    validmasklist = []
+    for n in range(len(trackinfo['trackid'][0])):
+        validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
+    validmask = torch.stack(validmasklist, dim=0)
+
+    coords0, val0 = dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks[0])
     val0 = val0 * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
 
     n = len(poses_est)
@@ -103,7 +134,7 @@ def flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph, gamma=0.9):
 
     for i in range(n):
         w = gamma ** (n - i - 1)
-        coords1, val1 = projective_transform(poses_est[i], disps_est[i], intrinsics, ii, jj)
+        coords1, val1 = dyprojective_transform(poses_est[i], disps_est[i], intrinsics, ii, jj, validmask, objectposes_est[i], objectmasks[0])
 
         v = (val0 * val1).squeeze(dim=-1)
         epe = v * (coords1 - coords0).norm(dim=-1)
