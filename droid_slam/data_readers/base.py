@@ -55,7 +55,7 @@ class RGBDDataset(data.Dataset):
             if not self.__class__.is_test_scene(scene):
                 graph = self.scene_info[scene]['graph']
                 for i in graph:
-                    if len(graph[i][0]) > self.n_frames:
+                    if len(graph[i][0]) > 0:
                         self.dataset_index.append((scene, i))
             else:
                 print("Reserving {} for validation".format(scene))
@@ -86,9 +86,14 @@ class RGBDDataset(data.Dataset):
         fre = torch.bincount(trackid)
         frerank = torch.where(fre == torch.amax(fre))[0]
         TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))#找出出现频率最大的几辆车
+        if TRACKID.shape[0] > 8:
+            TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-8:]))
         if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
-            frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1, torch.amax(fre)-2])))[0]
+            frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1])))[0]
             TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
+            if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
+                frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1,torch.amax(fre)-2])))[0]
+                TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
         TRACKID = TRACKID[TRACKID!=0]-1
         
         bins = torch.concat(count)
@@ -155,18 +160,28 @@ class RGBDDataset(data.Dataset):
         # inds = [ ix ]
         # while len(inds) < self.n_frames:
             # get other frames within flow threshold
-        k = (frame_graph[ix][1] > self.fmin) & (frame_graph[ix][1] < self.fmax)
-        frames = frame_graph[ix][0][k]
 
-        while(1):
-            if len(frames) < self.n_frames-1:
-                inds = np.random.choice(frame_graph[ix][0], self.n_frames -1, replace = False)
-            else:
-                inds = np.random.choice(frame_graph[ix][0][k], self.n_frames -1, replace = False)
+        step = 5
+        if 20<=ix<=810:
+            inds = [ix-2*step, ix-step, ix, ix+step, ix+2*step]
+        elif ix<20:
+            inds = [ix, ix+step, ix+2*step, ix+3*step, ix+4*step]
+        else:
+            inds = [ix-4*step, ix-3*step, ix-2*step, ix-step, ix]
+        
+        inds =np.sort(inds)
+        # k = (frame_graph[ix][1] > self.fmin) & (frame_graph[ix][1] < self.fmax)
+        # frames = frame_graph[ix][0][k]
+
+        # while(1):
+        #     if len(frames) < self.n_frames-1:
+        #         inds = np.random.choice(frame_graph[ix][0], self.n_frames -1, replace = False)
+        #     else:
+        #         inds = np.random.choice(frame_graph[ix][0][k], self.n_frames -1, replace = False)
             
-            inds = np.sort(np.append(ix, inds))
-            if (len(np.unique(inds)) == len(inds)):
-                break
+        #     inds = np.sort(np.append(ix, inds))
+        #     if (len(np.unique(inds)) == len(inds)):
+        #         break
         
             # prefer frames forward in time
             # if np.count_nonzero(frames[frames > ix]):
@@ -199,7 +214,7 @@ class RGBDDataset(data.Dataset):
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
         images = torch.from_numpy(images).float()
-        images = images.permute(0, 3, 1, 2)
+        # images = images.permute(0, 3, 1, 2)
 
         disps = torch.from_numpy(1.0 / depths)
         poses = torch.from_numpy(poses)
@@ -213,6 +228,15 @@ class RGBDDataset(data.Dataset):
         #             self.aug(images, objectmasks, poses, disps, intrinsics)
 
         TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)
+
+        for n, idx in enumerate(inds):
+            vis_image = images[n].clone()
+            vis_image[torch.isin(objectmasks[n], TRACKID+1)] = torch.tensor([255.0,255.0,255.0])
+            cv2.imwrite('./visualize/mask'+str(idx)+'.png', np.array(vis_image))
+
+        images = images.permute(0, 3, 1, 2)
+        images = torch.nn.functional.interpolate(images, size = (240,808))
+
         objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance).float()
         objectmasks = self.construct_objectmask(TRACKID, objectmasks)
 

@@ -168,13 +168,13 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = TRUE)
 
-    r = (target - coords)
-    # residual = r[r!=0.0]
-    # print('residual is {}'.format(torch.mean((torch.abs(residual)))))
+    r = (target - coords)*valid*weight
+    residual = r[r!=0.0]
+    print('residual is {}'.format(torch.mean((torch.abs(residual)))))
 
     r = r.view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
-    w = (valid*weight).view(B,N,-1,1)
-    # w = (valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
+    # w = (valid*weight).view(B,N,-1,1)
+    w = (valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6

@@ -116,6 +116,8 @@ class VKitti2(RGBDDataset):
             noidx = torch.from_numpy(np.setdiff1d(idx, np.arange(len(ids))))
             objectpose[noidx] = torch.tensor([-0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).double()
             objectpose_list.append(objectpose)
+        if objectpose_list == []:
+            print('no trackid !! {}'.format(ids))
         objectposes = torch.stack(objectpose_list, dim = 0)
         return objectposes
 
@@ -125,7 +127,7 @@ class VKitti2(RGBDDataset):
 
     @staticmethod
     def image_read(image_file):
-        return cv2.resize(cv2.imread(image_file), (808,240))
+        return cv2.imread(image_file)
 
     @staticmethod
     def objectmask_read(mask_file):

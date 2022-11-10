@@ -136,10 +136,9 @@ def train(gpu, args):
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
-                # print('geo_loss is {}'.format(geo_loss))
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
                 res_loss, res_metrics = losses.residual_loss(residuals)
-                flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph)
+                flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, trackinfo, intrinsics, graph)
 
                 loss = args.w1 * geo_loss + args.w1 * Obgeo_loss + args.w2 * res_loss + args.w3 * flo_loss
                 loss.backward()
@@ -200,7 +199,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=6)
+    parser.add_argument('--iters', type=int, default=1)
     parser.add_argument('--steps', type=int, default=250000)
     parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)

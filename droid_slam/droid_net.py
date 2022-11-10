@@ -218,10 +218,10 @@ class DroidNet(nn.Module):
             target = coords1 + delta
             target2, weight = pops.dyprojective_transform(Ps, depth, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
-            for i in range(2):
-                Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, depth, intrinsics, ii, jj, fixedp=2)
+            for i in range(8):
+                Gs, ObjectGs, disps = dynamicBA(target2, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, depth, intrinsics, ii, jj, fixedp=2)
 
-            coords1, valid_mask = pops.dyprojective_transform(Gs, depth, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            coords1, valid_mask = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             residual = (target - coords1)
 
             Gs_list.append(Gs)
