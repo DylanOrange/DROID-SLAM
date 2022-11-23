@@ -168,11 +168,11 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = TRUE)
 
-    r = (target - coords)
+    # r = (target - coords)*valid*weight
     # residual = r[r!=0.0]
     # print('residual is {}'.format(torch.mean((torch.abs(residual)))))
 
-    r = r.view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
+    r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
     w = (valid*weight).view(B,N,-1,1)
     # w = (valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
 
@@ -206,7 +206,6 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     h_test = h.transpose(2,3).contiguous()#1,24,6060,24,6
 
     N_app = trackinfo['n_app'][0] + P-(N_car+1)*fixedp
-    P = P-fixedp
 
     h_v = h_test.view(B, N, -1, N_app*D)#1,24,6060,24*6
     h_vtrans = h_v.transpose(2,3)
@@ -219,7 +218,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     H_test = H_test.view(B, N_app, D, N_app, D).transpose(2,3)
 
     Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
-    Jz = torch.zeros_like(Jz)
+    # Jz = torch.zeros_like(Jz)
 
     Eci = (Jci.transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
     Ecj = (Jcj.transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
@@ -231,7 +230,6 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     r = r.view(B, N, ht*wd, -1)#1,14,3030,2
     wk = torch.sum(w*r*Jz, dim=-1)#1,18,3030
     Ck = torch.sum(w*Jz*Jz, dim=-1)#1,18,3030
-    # # print(r[:,0,2525:2626])
     kx, kk = torch.unique(ii, return_inverse=True)#
     M = kx.shape[0]#5
 
@@ -240,19 +238,19 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     # ii = ii - fixedp
     # jj = jj - fixedp
 
-    Ec = safe_scatter_add_mat(Eci, ii, kk, P + fixedp, M) + \
-        safe_scatter_add_mat(Ecj, jj, kk, P + fixedp, M)#1,15,6,3030
+    Ec = safe_scatter_add_mat(Eci, ii, kk, P, M) + \
+        safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,15,6,3030
 
-    Eo = safe_scatter_add_mat(Eoi, ii, kk, P + fixedp, M) + \
-        safe_scatter_add_mat(Eoj, jj, kk, P + fixedp, M)#6,15,6,3030
+    Eo = safe_scatter_add_mat(Eoi, ii, kk, P, M) + \
+        safe_scatter_add_mat(Eoj, jj, kk, P , M)#6,15,6,3030
 
     C = safe_scatter_add_vec(Ck, kk, M)#1,5,3030
     w = safe_scatter_add_vec(wk, kk, M)#1,5,3030
 
-    C = C + eta.view(*C.shape) + 1e-7 #eta, 5,30,101
+    C = C + eta.view(*C.shape) + 1e-7
 
-    Ec = Ec.view(B, P + fixedp, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
-    Eo = Eo.view(N_car, P + fixedp, M, D, ht*wd)#6,3,5,6,30*101
+    Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
+    Eo = Eo.view(N_car, P, M, D, ht*wd)#6,3,5,6,30*101
     Eo_list = []
     for i in range(N_car):
         Eo_list.append(Eo[i, trackinfo['apperance'][i][0]][fixedp:])
@@ -262,8 +260,9 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     ### 3: solve the system ###
     # dx = block_solve(H_test, v_test)#1,4,6,1,5,3030
     dx, dz = schur_solve(H_test, E, C, v_test, w)#1,4,6,1,5,3030
+
+    P = P-fixedp
     poses = pose_retr(poses, dx[:, :P, :], torch.arange(P).to(device=dx.device) + fixedp)
-    # print('after update {}'.format(poses.data))
 
     idx = P
     for i in range(N_car):

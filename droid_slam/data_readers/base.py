@@ -55,7 +55,7 @@ class RGBDDataset(data.Dataset):
             if not self.__class__.is_test_scene(scene):
                 graph = self.scene_info[scene]['graph']
                 for i in graph:
-                    if len(graph[i][0]) > self.n_frames:
+                    if len(graph[i][0]) > 0:
                         self.dataset_index.append((scene, i))
             else:
                 print("Reserving {} for validation".format(scene))
@@ -86,9 +86,14 @@ class RGBDDataset(data.Dataset):
         fre = torch.bincount(trackid)
         frerank = torch.where(fre == torch.amax(fre))[0]
         TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))#找出出现频率最大的几辆车
+        if TRACKID.shape[0] > 8:
+            TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-8:]))
         if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
-            frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1, torch.amax(fre)-2])))[0]
+            frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1])))[0]
             TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
+            if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
+                frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1,torch.amax(fre)-2])))[0]
+                TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
         TRACKID = TRACKID[TRACKID!=0]-1
         
         bins = torch.concat(count)
@@ -110,8 +115,8 @@ class RGBDDataset(data.Dataset):
         single_masklist = []
         for id in TRACKID:
             single_mask = torch.where(mask == (id+1), 1.0, 0.0)
-            sampled_mask = torch.nn.functional.interpolate(single_mask.unsqueeze(1), size = (30,101)).int()
-            single_masklist.append(sampled_mask.squeeze(1))
+            # sampled_mask = torch.nn.functional.interpolate(single_mask.unsqueeze(1), size = (30,101), mode = 'bicubic').int()
+            single_masklist.append(single_mask)
         return torch.stack(single_masklist, dim = 0)
 
     def build_frame_graph(self, poses, depths, intrinsics, f=16, max_flow=256):
@@ -155,18 +160,28 @@ class RGBDDataset(data.Dataset):
         # inds = [ ix ]
         # while len(inds) < self.n_frames:
             # get other frames within flow threshold
-        k = (frame_graph[ix][1] > self.fmin) & (frame_graph[ix][1] < self.fmax)
-        frames = frame_graph[ix][0][k]
 
-        while(1):
-            if len(frames) < self.n_frames-1:
-                inds = np.random.choice(frame_graph[ix][0], self.n_frames -1, replace = False)
-            else:
-                inds = np.random.choice(frame_graph[ix][0][k], self.n_frames -1, replace = False)
+        step = 2
+        if 20<=ix<=810:
+            inds = [ix-2*step, ix-step, ix, ix+step, ix+2*step]
+        elif ix<20:
+            inds = [ix, ix+step, ix+2*step, ix+3*step, ix+4*step]
+        else:
+            inds = [ix-4*step, ix-3*step, ix-2*step, ix-step, ix]
+        
+        inds =np.sort(inds)
+        # k = (frame_graph[ix][1] > self.fmin) & (frame_graph[ix][1] < self.fmax)
+        # frames = frame_graph[ix][0][k]
+
+        # while(1):
+        #     if len(frames) < self.n_frames-1:
+        #         inds = np.random.choice(frame_graph[ix][0], self.n_frames -1, replace = False)
+        #     else:
+        #         inds = np.random.choice(frame_graph[ix][0][k], self.n_frames -1, replace = False)
             
-            inds = np.sort(np.append(ix, inds))
-            if (len(np.unique(inds)) == len(inds)):
-                break
+        #     inds = np.sort(np.append(ix, inds))
+        #     if (len(np.unique(inds)) == len(inds)):
+        #         break
         
             # prefer frames forward in time
             # if np.count_nonzero(frames[frames > ix]):
@@ -184,26 +199,29 @@ class RGBDDataset(data.Dataset):
         #     inds.append(ix + 5*i)
 
         #读取mask并确定要追踪的车的id
-        images, depths, poses, intrinsics, objectmasks = [], [], [], [], []
+        images, depths, poses, intrinsics, objectmasks, sampledmask = [], [], [], [], [], []
         for i in inds:
             images.append(self.__class__.image_read(images_list[i]))
             depths.append(self.__class__.depth_read(depths_list[i]))
-            objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i]))
+            objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[0])
+            sampledmask.append(self.__class__.objectmask_read(objectmasks_list[i])[1])
             poses.append(poses_list[i])
             intrinsics.append(intrinsics_list[i])
 
-        images = np.stack(images).astype(np.float32)
-        objectmasks = np.stack(objectmasks).astype(np.float32)
-        depths = np.stack(depths).astype(np.float32)
-        poses = np.stack(poses).astype(np.float32)
-        intrinsics = np.stack(intrinsics).astype(np.float32)
+        images = np.stack(images)
+        objectmasks = np.stack(objectmasks)
+        sampledmask = np.stack(sampledmask)
+        depths = np.stack(depths)
+        poses = np.stack(poses)
+        intrinsics = np.stack(intrinsics)
 
-        images = torch.from_numpy(images).float()
-        images = images.permute(0, 3, 1, 2)
+        images = torch.from_numpy(images)
+        # images = images.permute(0, 3, 1, 2)
 
         disps = torch.from_numpy(1.0 / depths)
         poses = torch.from_numpy(poses)
         objectmasks = torch.from_numpy(objectmasks).int()
+        sampledmask = torch.from_numpy(sampledmask).int()
         intrinsics = torch.from_numpy(intrinsics)
         intrinsics[:, 0:2] *= (101/ 1242)
         intrinsics[:, 2:4] *= (30/ 375)
@@ -213,8 +231,17 @@ class RGBDDataset(data.Dataset):
         #             self.aug(images, objectmasks, poses, disps, intrinsics)
 
         TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)
-        objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance).float()
-        objectmasks = self.construct_objectmask(TRACKID, objectmasks)
+
+        # for n, idx in enumerate(inds):
+        #     vis_image = images[n].clone()
+        #     vis_image[torch.isin(objectmasks[n], TRACKID+1)] = torch.tensor([255.0,255.0,255.0])
+        #     cv2.imwrite('./visualize/mask'+str(idx)+'.png', np.array(vis_image))
+
+        images = images.permute(0, 3, 1, 2)
+        images = torch.nn.functional.interpolate(images, size = (240,808))
+
+        objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)
+        objectmasks = self.construct_objectmask(TRACKID, sampledmask)
 
         trackinfo = {
             'trackid': TRACKID.to('cuda'),

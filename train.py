@@ -90,10 +90,10 @@ def train(gpu, args):
     should_keep_training = True
     total_steps = 0
 
-    geo_sum = 0.0
-    geo_ob_sum = 0.0
-    flow_sum = 0.0
-    res_sum = 0.0
+    # geo_sum = 0.0
+    # geo_ob_sum = 0.0
+    # flow_sum = 0.0
+    # res_sum = 0.0
 
     while should_keep_training:
         for i_batch, item in enumerate(train_loader):
@@ -136,10 +136,9 @@ def train(gpu, args):
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
-                # print('geo_loss is {}'.format(geo_loss))
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
                 res_loss, res_metrics = losses.residual_loss(residuals)
-                flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph)
+                flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, trackinfo, intrinsics, graph)
 
                 loss = args.w1 * geo_loss + args.w1 * Obgeo_loss + args.w2 * res_loss + args.w3 * flo_loss
                 loss.backward()
@@ -153,11 +152,18 @@ def train(gpu, args):
             metrics.update(Obgeo_metrics)
             metrics.update(res_metrics)
             metrics.update(flo_metrics)
+            loss = {
+                'geo_loss':geo_loss.item(),
+                'Obgeo_loss':Obgeo_loss.item(),
+                'flo_loss':flo_loss.item(),
+                'res_loss':res_loss.item(),
+            }
+            metrics.update(loss)
 
-            geo_sum += geo_loss
-            geo_ob_sum += Obgeo_loss
-            flow_sum += flo_loss
-            res_sum += res_loss
+            # geo_sum += geo_loss
+            # geo_ob_sum += Obgeo_loss
+            # flow_sum += flo_loss
+            # res_sum += res_loss
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
@@ -165,16 +171,16 @@ def train(gpu, args):
             
             total_steps += 1
 
-            if total_steps %20 == 0:
-                print('geo loss {}'.format(geo_sum/20.0))
-                print('ob geo loss {}'.format(geo_ob_sum/20.0))
-                print('flow loss {}'.format(flow_sum/20.0))
-                print('res loss {}'.format(res_sum/20.0))
+            # if total_steps %20 == 0:
+            #     print('geo loss {}'.format(geo_sum/20.0))
+            #     print('ob geo loss {}'.format(geo_ob_sum/20.0))
+            #     print('flow loss {}'.format(flow_sum/20.0))
+            #     print('res loss {}'.format(res_sum/20.0))
 
-                geo_sum = 0.0
-                geo_ob_sum = 0.0
-                flow_sum = 0.0
-                res_sum = 0.0
+            #     geo_sum = 0.0
+            #     geo_ob_sum = 0.0
+            #     flow_sum = 0.0
+            #     res_sum = 0.0
 
             if gpu == 0:
                 logger.push(metrics)
@@ -194,21 +200,21 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default='bla', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default = 'droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../autodl-tmp/vkitti/Scene20', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=6)
-    parser.add_argument('--steps', type=int, default=250000)
-    parser.add_argument('--lr', type=float, default=0.00025)
+    parser.add_argument('--iters', type=int, default=10)
+    parser.add_argument('--steps', type=int, default=80000)
+    parser.add_argument('--lr', type=float, default=0.0005)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=5)
 
     parser.add_argument('--w1', type=float, default=10.0)
     parser.add_argument('--w2', type=float, default=0.01)
-    parser.add_argument('--w3', type=float, default=0.05)
+    parser.add_argument('--w3', type=float, default=1)
 
     parser.add_argument('--fmin', type=float, default=8.0)
     parser.add_argument('--fmax', type=float, default=80.0)

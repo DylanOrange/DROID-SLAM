@@ -171,12 +171,14 @@ class DroidNet(nn.Module):
 
     def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disps, depth, intrinsics, trackinfo, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
-        
+        #Ps is ground truth
         # ObjectGs = ObjectGs[0]
         objectmasks = objectmasks[0]
 
-        u = keyframe_indicies(graph)
-        ii, jj, kk = graph_to_edge_list(graph)
+        # u = keyframe_indicies(graph)
+        # ii, jj, kk = graph_to_edge_list(graph)
+
+        ii, jj = add_neighborhood_factors(0,5)
 
         ii = ii.to(device=images.device, dtype=torch.long)
         jj = jj.to(device=images.device, dtype=torch.long)
@@ -193,7 +195,7 @@ class DroidNet(nn.Module):
             validmasklist.append(torch.isin(ii, trackinfo['apperance'][n][0]) & torch.isin(jj, trackinfo['apperance'][n][0]))
         validmask = torch.stack(validmasklist, dim=0)
 
-        coords1, _ = pops.dyprojective_transform(Gs, depth, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+        coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
         target = coords1.clone()
 
         Gs_list, disp_list, residual_list, ObjectGs_list = [], [], [], []
@@ -205,23 +207,23 @@ class DroidNet(nn.Module):
             target = target.detach()
 
             # extract motion features
-            corr = corr_fn(coords1)
+            corr = corr_fn(coords1.float())
             resd = target - coords1
             flow = coords1 - coords0
 
             motion = torch.cat([flow, resd], dim=-1)
-            motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
+            motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0).float()
 
             net, delta, weight, eta, upmask = \
                 self.update(net, inp, corr, motion, ii, jj)
 
             target = coords1 + delta
-            target2, weight = pops.dyprojective_transform(Ps, depth, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+            # target2, weight = pops.dyprojective_transform(Ps, depth, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
             for i in range(2):
-                Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, depth, intrinsics, ii, jj, fixedp=2)
+                Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
-            coords1, valid_mask = pops.dyprojective_transform(Gs, depth, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            coords1, valid_mask = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             residual = (target - coords1)
 
             Gs_list.append(Gs)
@@ -231,3 +233,14 @@ class DroidNet(nn.Module):
 
 
         return Gs_list, ObjectGs_list, disp_list, residual_list
+
+def add_neighborhood_factors(t0, t1, r=2):
+    """ add edges between neighboring frames within radius r """
+
+    ii, jj = torch.meshgrid(torch.arange(t0, t1), torch.arange(t0, t1))
+    ii = ii.reshape(-1).to(dtype=torch.long)
+    jj = jj.reshape(-1).to(dtype=torch.long)
+
+    keep = ((ii - jj).abs() > 0) & ((ii - jj).abs() <= r)
+    return ii[keep], jj[keep]
+
