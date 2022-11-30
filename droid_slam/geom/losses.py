@@ -127,6 +127,7 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     validmask = torch.stack(validmasklist, dim=0)
 
     coords0, val0 = dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks[0])
+    # coords0, val0 = projective_transform(Ps, disps, intrinsics, ii, jj)
     val0 = val0 * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
 
     n = len(poses_est)
@@ -135,6 +136,7 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     for i in range(n):
         w = gamma ** (n - i - 1)
         coords1, val1 = dyprojective_transform(poses_est[i], disps_est[i], intrinsics, ii, jj, validmask, objectposes_est[i], objectmasks[0])
+        # coords1, val1 = projective_transform(poses_est[i], disps_est[i], intrinsics, ii, jj)
 
         v = (val0 * val1).squeeze(dim=-1)
         epe = v * (coords1 - coords0).norm(dim=-1)

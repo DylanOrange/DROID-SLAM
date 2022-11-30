@@ -47,6 +47,8 @@ def load_weights(model, weights):
     # state_dict = OrderedDict([
     #     (k.replace("module.", ""), v) for (k, v) in torch.load(weights).items()])
     state_dict = torch.load(weights)
+    # for key in state_dict.keys():
+    #     state_dict.update({key.split('.', 1)[1]:state_dict.pop(key)})
 
     state_dict["module.update.weight.2.weight"] = state_dict["module.update.weight.2.weight"][:2]
     state_dict["module.update.weight.2.bias"] = state_dict["module.update.weight.2.bias"][:2]
@@ -109,13 +111,13 @@ def train(gpu, args):
             ObjectGs = SE3.IdentityLike(ObjectPs)
 
             # randomize frame graph
-            if np.random.rand() < 0.5:
-                graph = build_frame_graph(poses, disps, intrinsics, num=args.edges)
+            # if np.random.rand() < 0.5:
+            #     graph = build_frame_graph(poses, disps, intrinsics, num=args.edges)
             
-            else:
-                graph = OrderedDict()
-                for i in range(N):
-                    graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
+            # else:
+            graph = OrderedDict()
+            for i in range(N):
+                graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
             
             # fix first to camera poses
             Gs.data[:,0] = Ps.data[:,0].clone()
@@ -141,7 +143,7 @@ def train(gpu, args):
                 flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, trackinfo, intrinsics, graph)
 
                 loss = args.w1 * geo_loss + args.w1 * Obgeo_loss + args.w2 * res_loss + args.w3 * flo_loss
-                loss.backward()
+                loss.backward() 
 
                 Gs = poses_est[-1].detach()
                 ObjectGs = objectposes_est[-1].detach()
@@ -185,7 +187,7 @@ def train(gpu, args):
             if gpu == 0:
                 logger.push(metrics)
 
-            if total_steps % 10000 == 0 and gpu == 0:
+            if total_steps % 1000 == 0 and gpu == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                 torch.save(model.state_dict(), PATH)
 
@@ -199,14 +201,14 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='bla', help='name your experiment')
+    parser.add_argument('--name', default='removeobject_nocheckpoint', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default = 'droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../autodl-tmp/vkitti/Scene20', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=10)
+    parser.add_argument('--iters', type=int, default=8)
     parser.add_argument('--steps', type=int, default=80000)
     parser.add_argument('--lr', type=float, default=0.0005)
     parser.add_argument('--clip', type=float, default=2.5)

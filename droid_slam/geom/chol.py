@@ -64,7 +64,12 @@ def schur_solve(H, E, C, v, w, ep=0.0001, lm=0.0001, sless=False):
     v = v - torch.matmul(E, Q*w)
 
     # dx = CholeskySolver.apply(S, v)
-    dx = torch.linalg.solve(S, v)
+    try:
+        dx = torch.linalg.solve(S, v)
+    except Exception as e:
+        print(e)
+        dx = torch.zeros_like(v)
+        
     if sless:
         return dx.reshape(B, P, D)
 
