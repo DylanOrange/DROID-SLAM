@@ -44,23 +44,25 @@ def show_image(image):
 def load_weights(model, weights):
     """ load trained model weights """
 
-    # state_dict = OrderedDict([
-    #     (k.replace("module.", ""), v) for (k, v) in torch.load(weights).items()])
-    state_dict = torch.load(weights)
+    state_dict = OrderedDict([
+        (k.replace("module.", ""), v) for (k, v) in torch.load(weights).items()])
+    # state_dict = torch.load(weights)
+    # for key in state_dict.keys():
+    #     state_dict.update({key.split('.', 1)[1]:state_dict.pop(key)})
 
-    state_dict["module.update.weight.2.weight"] = state_dict["module.update.weight.2.weight"][:2]
-    state_dict["module.update.weight.2.bias"] = state_dict["module.update.weight.2.bias"][:2]
-    state_dict["module.update.delta.2.weight"] = state_dict["module.update.delta.2.weight"][:2]
-    state_dict["module.update.delta.2.bias"] = state_dict["module.update.delta.2.bias"][:2]
+    state_dict["update.weight.2.weight"] = state_dict["update.weight.2.weight"][:2]
+    state_dict["update.weight.2.bias"] = state_dict["update.weight.2.bias"][:2]
+    state_dict["update.delta.2.weight"] = state_dict["update.delta.2.weight"][:2]
+    state_dict["update.delta.2.bias"] = state_dict["update.delta.2.bias"][:2]
 
     model.load_state_dict(state_dict)
     return model
 
-def train(gpu, args):
+def train(args):
     """ Test to make sure project transform correctly maps points """
 
     # coordinate multiple GPUs
-    setup_ddp(gpu, args)
+    # setup_ddp(gpu, args)
     rng = np.random.default_rng(12345)
 
     N = args.n_frames
@@ -68,7 +70,7 @@ def train(gpu, args):
     model.cuda()
     model.train()
 
-    model = DDP(model, device_ids=[gpu], find_unused_parameters=True)
+    # model = DDP(model, device_ids=[gpu], find_unused_parameters=True)
 
     if args.ckpt is not None:
         model = load_weights(model, args.ckpt)
@@ -76,10 +78,10 @@ def train(gpu, args):
     # fetch dataloader
     db = dataset_factory(['vkitti2'], datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax)
 
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
-        db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    # train_sampler = torch.utils.data.distributed.DistributedSampler(
+    #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
 
-    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=1)
+    train_loader = DataLoader(db, batch_size=args.batch, shuffle = True)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -109,13 +111,13 @@ def train(gpu, args):
             ObjectGs = SE3.IdentityLike(ObjectPs)
 
             # randomize frame graph
-            if np.random.rand() < 0.5:
-                graph = build_frame_graph(poses, disps, intrinsics, num=args.edges)
+            # if np.random.rand() < 0.5:
+            #     graph = build_frame_graph(poses, disps, intrinsics, num=args.edges)
             
-            else:
-                graph = OrderedDict()
-                for i in range(N):
-                    graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
+            # else:
+            graph = OrderedDict()
+            for i in range(N):
+                graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
             
             # fix first to camera poses
             Gs.data[:,0] = Ps.data[:,0].clone()
@@ -140,7 +142,7 @@ def train(gpu, args):
                 res_loss, res_metrics = losses.residual_loss(residuals)
                 flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, trackinfo, intrinsics, graph)
 
-                loss = args.w1 * geo_loss + args.w1 * Obgeo_loss + args.w2 * res_loss + args.w3 * flo_loss
+                loss = args.w1 * geo_loss  + args.w1 * Obgeo_loss + args.w2 * res_loss + args.w3 * flo_loss
                 loss.backward()
 
                 Gs = poses_est[-1].detach()
@@ -160,32 +162,16 @@ def train(gpu, args):
             }
             metrics.update(loss)
 
-            # geo_sum += geo_loss
-            # geo_ob_sum += Obgeo_loss
-            # flow_sum += flo_loss
-            # res_sum += res_loss
-
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
             scheduler.step()
             
             total_steps += 1
 
-            # if total_steps %20 == 0:
-            #     print('geo loss {}'.format(geo_sum/20.0))
-            #     print('ob geo loss {}'.format(geo_ob_sum/20.0))
-            #     print('flow loss {}'.format(flow_sum/20.0))
-            #     print('res loss {}'.format(res_sum/20.0))
+            # if gpu == 0:
+            logger.push(metrics)
 
-            #     geo_sum = 0.0
-            #     geo_ob_sum = 0.0
-            #     flow_sum = 0.0
-            #     res_sum = 0.0
-
-            if gpu == 0:
-                logger.push(metrics)
-
-            if total_steps % 10000 == 0 and gpu == 0:
+            if total_steps % 1000 == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                 torch.save(model.state_dict(), PATH)
 
@@ -193,20 +179,20 @@ def train(gpu, args):
                 should_keep_training = False
                 break
 
-    dist.destroy_process_group()
+    # dist.destroy_process_group()
                 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='bla', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default = 'droid.pth')
+    parser.add_argument('--name', default='nocheckpoint_multiple_lr50', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='../autodl-tmp/vkitti/Scene20', help="path to dataset directory")
+    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2/Scene20', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=10)
+    parser.add_argument('--iters', type=int, default=8)
     parser.add_argument('--steps', type=int, default=80000)
     parser.add_argument('--lr', type=float, default=0.0005)
     parser.add_argument('--clip', type=float, default=2.5)
@@ -234,8 +220,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.world_size = args.gpus
+    train(args)
 
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12356'
-    mp.spawn(train, nprocs=args.gpus, args=(args,))
+    # os.environ['MASTER_ADDR'] = 'localhost'
+    # os.environ['MASTER_PORT'] = '12356'
+    # mp.spawn(train, nprocs=args.gpus, args=(args,))
 

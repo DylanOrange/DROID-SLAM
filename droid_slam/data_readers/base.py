@@ -95,7 +95,8 @@ class RGBDDataset(data.Dataset):
                 frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1,torch.amax(fre)-2])))[0]
                 TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
         TRACKID = TRACKID[TRACKID!=0]-1
-        
+        # TRACKID = torch.tensor([TRACKID[0]])
+
         bins = torch.concat(count)
         Apperance = []
         N_app = 0

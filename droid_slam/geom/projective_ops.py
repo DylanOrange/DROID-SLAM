@@ -102,7 +102,7 @@ def projective_transform(poses, depths, intrinsics, ii, jj, jacobian=False, retu
     # transform
     Gij = poses[:,jj] * poses[:,ii].inv()
 
-    Gij.data[:,ii==jj] = torch.as_tensor([-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], device="cuda")
+    Gij.data[:,ii==jj] = torch.as_tensor([-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype, device="cuda")
     X1, Ja = actp(Gij, X0, jacobian=jacobian)
     
     # project (pinhole)

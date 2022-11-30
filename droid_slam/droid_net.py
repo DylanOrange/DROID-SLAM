@@ -176,9 +176,9 @@ class DroidNet(nn.Module):
         objectmasks = objectmasks[0]
 
         # u = keyframe_indicies(graph)
-        # ii, jj, kk = graph_to_edge_list(graph)
+        ii, jj, _ = graph_to_edge_list(graph)
 
-        ii, jj = add_neighborhood_factors(0,5)
+        # ii, jj = add_neighborhood_factors(0,5)
 
         ii = ii.to(device=images.device, dtype=torch.long)
         jj = jj.to(device=images.device, dtype=torch.long)
@@ -196,6 +196,7 @@ class DroidNet(nn.Module):
         validmask = torch.stack(validmasklist, dim=0)
 
         coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+        # coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
         target = coords1.clone()
 
         Gs_list, disp_list, residual_list, ObjectGs_list = [], [], [], []
@@ -222,7 +223,9 @@ class DroidNet(nn.Module):
 
             for i in range(2):
                 Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                # Gs, disps = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
+            # coords1, valid_mask = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
             coords1, valid_mask = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             residual = (target - coords1)
 

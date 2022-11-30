@@ -156,7 +156,6 @@ def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1)
     ### 4: apply retraction ###
     poses = pose_retr(poses, dx, torch.arange(P) + fixedp)
     return poses
-
 def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 
     B, P, ht, wd = disps.shape#1,12,30,101
@@ -178,21 +177,21 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    Joi = Joi.reshape(N_car, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    Joj = Joj.reshape(N_car, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+    Joi = Joi.reshape(N_car, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
+    Joj = Joj.reshape(N_car, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
 
-    Jci = w*Jci
-    Jcj = w*Jcj
-    Joi = w*Joi*validmask[..., None, None]
-    Joj = w*Joj*validmask[..., None, None]
+    # Jci = w*Jci
+    # Jcj = w*Jcj
+    # Joi = w*Joi*validmask[..., None, None]
+    # Joj = w*Joj*validmask[..., None, None]
 
     i = torch.arange(N).to('cuda')
     ii_test = i*P + ii
     jj_test = i*P + jj
 
     hc = scatter_sum(Jci, ii_test, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_test, dim = 1,dim_size= N*P)
-    hc = hc.view(B, N, P, -1, D)#1,70,19,6060,6
-    hc = hc[:, :, fixedp:]#1,70,19,6060,6
+    hc = hc.view(B, N, P, -1, D)#1,14,5,6060,6
+    hc = hc[:, :, fixedp:]#1,14,3,6060,6
     hoi_list = []
     for i in range(N_car):
         hoi = scatter_sum(Joi[i], ii_test, dim = 0,dim_size= N*P) + scatter_sum(Joj[i], jj_test, dim = 0,dim_size= N*P)
@@ -202,29 +201,31 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
         hoi_list.append(hoi)
     ho = torch.cat(hoi_list, dim = 2)
     # ho = torch.zeros_like(ho)
-    h = torch.cat([hc, ho], dim = 2) #1,24,24,6060,6
-    h_test = h.transpose(2,3).contiguous()#1,24,6060,24,6
+    h = torch.cat([hc, ho], dim = 2) #1,14,6,6060,6
+    h_test = h.transpose(2,3).contiguous()#1,14,6060,6,6
+    wh_test = h_test*w[..., None]
 
     N_app = trackinfo['n_app'][0] + P-(N_car+1)*fixedp
 
-    h_v = h_test.view(B, N, -1, N_app*D)#1,24,6060,24*6
+    h_v = wh_test.view(B, N, -1, N_app*D)#1,24,6060,24*6
     h_vtrans = h_v.transpose(2,3)
     v_test = torch.matmul(h_vtrans, r)
     v_test = torch.sum(v_test, dim = 1)
     v_test = v_test.view(B, N_app, D)
-    h_test = h_test.view(B, -1, N_app*D)
-    h_transpose = h_test.transpose(1,2)
-    H_test = torch.matmul(h_transpose, h_test)
+    h_test = h_test.view(B, -1, N_app*D)#1,84840,36
+    wh_transpose = wh_test. view(B, -1, N_app*D)
+    wh_transpose = wh_transpose.transpose(1,2)
+    H_test = torch.matmul(wh_transpose, h_test)###weight乘了两次！！！
     H_test = H_test.view(B, N_app, D, N_app, D).transpose(2,3)
 
     Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
     # Jz = torch.zeros_like(Jz)
 
-    Eci = (Jci.transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
-    Ecj = (Jcj.transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
+    Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
+    Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
 
-    Eoi = (Joi.transpose(2,3).view(N_car,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
-    Eoj = (Joj.transpose(2,3).view(N_car,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
+    Eoi = ((w*Joi).transpose(2,3).view(N_car,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
+    Eoj = ((w*Joj).transpose(2,3).view(N_car,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
 
     w = w.view(B, N, ht*wd, -1)#1,14,3030,2
     r = r.view(B, N, ht*wd, -1)#1,14,3030,2
@@ -260,6 +261,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     ### 3: solve the system ###
     # dx = block_solve(H_test, v_test)#1,4,6,1,5,3030
     dx, dz = schur_solve(H_test, E, C, v_test, w)#1,4,6,1,5,3030
+    # dx = block_solve(H_test, v_test)#1,4,6,1,5,3030
 
     P = P-fixedp
     poses = pose_retr(poses, dx[:, :P, :], torch.arange(P).to(device=dx.device) + fixedp)
