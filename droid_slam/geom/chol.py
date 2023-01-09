@@ -40,7 +40,8 @@ def block_solve(H, b, ep=0.0001, lm=0.0001):
 
     b = b.reshape(B, N*D, 1)
 
-    x = CholeskySolver.apply(H,b)
+    # x = CholeskySolver.apply(H,b)
+    x = torch.linalg.solve(H, b)
     return x.reshape(B, N, D)
 
 

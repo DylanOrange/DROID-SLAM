@@ -15,14 +15,47 @@ def coords_grid(ht, wd, **kwargs):
 
     return torch.stack([x, y], dim=-1)
 
-def iproj(disps, intrinsics, jacobian=False):
+def batch_grid(corners, rec):
+    B = corners.shape[0]
+    x_list, y_list = [], []
+    for i in range(B):
+        y, x = torch.meshgrid(
+            torch.arange(corners[i,0], corners[i,0]+rec[0]).float(),
+            torch.arange(corners[i,1], corners[i,1]+rec[1]).float())
+        y_list.append(y)
+        x_list.append(x)
+    x = torch.stack(x_list).unsqueeze(1)
+    y = torch.stack(y_list).unsqueeze(1)
+    return (x,y)
+
+def crop(images, center, rec, depth = False):
+    B,N,_,_,ch = images.shape
+    output = torch.zeros(B, N, rec[0], rec[1], ch, dtype=images.dtype, device = images.device)
+    if depth:
+        output[output == 0.0] = -0.1
+    for n in range(B):
+        crop = images[n, :, center[n,0]:center[n,0]+rec[0], center[n,1]:center[n,1]+rec[1]]
+        try:
+            output[n] = crop
+        except Exception as e:
+            #padding
+            # print(e)
+            h,w = crop.shape[1:3]
+            output[n,:, :h, :w] = crop
+    return output
+
+def iproj(disps, intrinsics, jacobian=False, batch_grid = None):
     """ pinhole camera inverse projection """
-    ht, wd = disps.shape[2:]
+    # ht, wd = disps.shape[2:]
+    B,_, ht, wd = disps.shape
     fx, fy, cx, cy = extract_intrinsics(intrinsics)
     
-    y, x = torch.meshgrid(
-        torch.arange(ht).to(disps.device).float(),
-        torch.arange(wd).to(disps.device).float())
+    if batch_grid is not None:
+        x, y = batch_grid[0][0], batch_grid[1][0]
+    else:
+        y, x = torch.meshgrid(
+            torch.arange(ht).to(disps.device).float(),
+            torch.arange(wd).to(disps.device).float())#2,49,85
 
     i = torch.ones_like(disps)
     X = (x - cx) / fx
@@ -137,17 +170,27 @@ def induced_flow(poses, disps, intrinsics, ii, jj):
 
     return coords1[...,:2] - coords0, valid
 
-def dyactp(Gij, X0, Gijobject = None, objectmask = None, fullmask  = None, jacobian = False):
+def dyactp(Gij, X0, Gijobject = None, objectmask = None, fullmask  = None, jacobian = False, batch = False):
     """ action on point cloud """
     #X0: 1,12,30,101,4
     #objectmask: 2,12,30,101
-    static = (1-fullmask)[..., None] #2,12,30,101,1
-    cam_motion = Gij[:, :, None, None] * X0 #1,12,1,1,7 * 1,12,30,101,4
-    cam_filtered = static * cam_motion#2,12,30,101,4
+    if batch:
+        static = (1-objectmask)[..., None] #7,14,49,108,1
+        cam_motion = Gij[:, :, None, None] * X0 #1,14,1,1,7 * 7,14,49,108,4-> 7,14,49,108,4
+        cam_filtered = static * cam_motion#7,14,49,108,4
 
-    ob_motion = Gijobject[:, :, None, None] * X0 #2,12,1,1,7* 1,12,30,101,4 ->2,12,30,101,4
-    ob_filtered = torch.sum(objectmask[..., None]*ob_motion, dim = 0, keepdim= True)
-    X1 = cam_filtered+ob_filtered
+        ob_motion = Gijobject[:, :, None, None] * X0 #7,14,1,1,7* 7,14,49,108,4 ->7,14,49,108,4 
+        ob_filtered = objectmask[..., None]*ob_motion#7,14,49,108,4 
+        X1 = cam_filtered+ob_filtered#7,14,49,108,4 
+
+    else:
+        static = (1-fullmask)[..., None] #2,12,30,101,1
+        cam_motion = Gij[:, :, None, None] * X0 #1,12,1,1,7 * 1,12,30,101,4
+        cam_filtered = static * cam_motion#2,12,30,101,4
+
+        ob_motion = Gijobject[:, :, None, None] * X0 #2,12,1,1,7* 1,12,30,101,4 ->2,12,30,101,4
+        ob_filtered = torch.sum(objectmask[..., None]*ob_motion, dim = 0, keepdim= True)
+        X1 = cam_filtered+ob_filtered
 
     # X1 = Gij[:, :, None, None] * X0
     if jacobian:
@@ -166,11 +209,11 @@ def dyactp(Gij, X0, Gijobject = None, objectmask = None, fullmask  = None, jacob
 
     return X1, None
 
-def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, objectposes = None, objectmask = None, Jacobian = False, return_depth = False):
+def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, objectposes = None, objectmask = None, Jacobian = False, return_depth = False, batch = False, batch_grid = None):
     """ map points from ii->jj """
     
     #输入前面都有Batch 1，除了Objectmask
-    X0, Jz = iproj(depths[:, ii], intrinsics[:, ii], jacobian = Jacobian)#1,2,30,101,4
+    X0, Jz = iproj(depths[:, ii], intrinsics[:, ii], jacobian = Jacobian, batch_grid= batch_grid)#1,2,30,101,4
 
     # transform: both pose i and j are w2c
     Gij = poses[:, jj] * poses[:, ii].inv()
@@ -187,13 +230,13 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
         [-0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device) 
 
     #X1, with object X2, without object
-    X1, J1 = dyactp(Gij, X0, Gijobject = Gijobject, objectmask = validobjectmask, fullmask = fullmask, jacobian = Jacobian)
+    X1, J1 = dyactp(Gij, X0, Gijobject = Gijobject, objectmask = validobjectmask, fullmask = fullmask, jacobian = Jacobian, batch = batch)
 
     # project (pinhole)
     x1, Jp1 = proj(X1, intrinsics[:, jj], jacobian=Jacobian, return_depth=return_depth)
 
     # exclude points too close to camera
-    valid = ((X1[..., 2] > MIN_DEPTH) & (X0[..., 2] > MIN_DEPTH)).float()
+    valid = ((X1[..., 2] > MIN_DEPTH) & (X1[...,3] > 0.0) & (X0[..., 2] > MIN_DEPTH)).float()
     valid = valid.unsqueeze(-1)
 
     if Jacobian:
@@ -203,17 +246,22 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
 
         Jcoi = -Gijobject[:, :, None, None, None].adjT(Jcj)
 
-        Jci = torch.sum(Jcoi*validobjectmask[..., None, None], dim=0, keepdim=True) + Jci*(1-fullmask[..., None, None])
-
         Joi = Gjj[:, :, None, None, None].adjT(Jcj)
         Joj = -Joi
 
         Joi = Joi*validobjectmask[..., None, None]
         Joj = Joj*validobjectmask[..., None, None]
 
-        Jz = torch.sum((Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None], dim = 0, keepdim=True) + (Gij[:, :, None, None] * Jz) * (1 - fullmask[..., None])
-        Jz = torch.matmul(Jp1, Jz.unsqueeze(-1))
+        if batch:
+            Jci = Jcoi*validobjectmask[..., None, None]+ Jci*(1-validobjectmask[..., None, None])
+            # Jz = (Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None] + (Gij[:, :, None, None] * Jz) * (1 - validobjectmask[..., None])
 
-        return x1, valid, (Jci, Jcj, Joi, Joj, Jz)
+        else:
+            Jci = torch.sum(Jcoi*validobjectmask[..., None, None], dim=0, keepdim=True) + Jci*(1-fullmask[..., None, None])
+            # Jz = torch.sum((Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None], dim = 0, keepdim=True) + (Gij[:, :, None, None] * Jz) * (1 - fullmask[..., None])
+
+        # Jz = torch.matmul(Jp1, Jz.unsqueeze(-1))
+
+        return x1, valid, (Jci, Jcj, Joi, Joj)
 
     return x1, valid

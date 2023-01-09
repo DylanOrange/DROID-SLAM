@@ -90,7 +90,6 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True, object = False, track
             'ob_bad_tr': (t_err < .01).float().mean().item(),
         }
         # if geodesic_loss>0.5:
-        #     print(geodesic_loss)
         #     print(trackinfo['trackid'])
         #     print(trackinfo['frames'])
         #     # print(Ps.data)

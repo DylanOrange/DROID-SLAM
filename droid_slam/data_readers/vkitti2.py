@@ -132,14 +132,13 @@ class VKitti2(RGBDDataset):
     @staticmethod
     def objectmask_read(mask_file):
         mask = Image.open(mask_file)
-        sampled_mask = mask.resize((101,30))
-        return (np.array(mask), np.array(sampled_mask))
+        return np.array(mask)
 
     @staticmethod
     def depth_read(depth_file):
         depth = cv2.imread(depth_file, cv2.IMREAD_ANYCOLOR |
                            cv2.IMREAD_ANYDEPTH) / (VKitti2.DEPTH_SCALE*100)
-        depth = cv2.resize(depth, (101,30))
+        # depth = cv2.resize(depth, (101,30))
         depth[depth == np.nan] = 1.0
         depth[depth == np.inf] = 1.0
         depth[depth == 0] = 1.0

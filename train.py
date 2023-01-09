@@ -1,3 +1,4 @@
+from email.policy import strict
 from pickle import FALSE, TRUE
 import sys
 sys.path.append('droid_slam')
@@ -55,7 +56,7 @@ def load_weights(model, weights):
     state_dict["update.delta.2.weight"] = state_dict["update.delta.2.weight"][:2]
     state_dict["update.delta.2.bias"] = state_dict["update.delta.2.bias"][:2]
 
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict = False)
     return model
 
 def train(args):
@@ -101,7 +102,7 @@ def train(args):
         for i_batch, item in enumerate(train_loader):
             optimizer.zero_grad()
 
-            images, poses, objectposes, objectmasks,disps, intrinsics, trackinfo = item
+            images, poses, objectposes, objectmasks, disps, cropmasks, cropdisps, fullmasks, fulldisps, intrinsics, trackinfo = item
 
             # convert poses w2c -> c2w
             Ps = SE3(poses)#这里暂时使用w2c
@@ -134,7 +135,7 @@ def train(args):
                 r = rng.random()
                 
                 # intrinsics0 = intrinsics / 8.0
-                poses_est, objectposes_est, disps_est, residuals = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps, intrinsics, trackinfo,
+                poses_est, objectposes_est, disps_est, residuals, flow_metrics = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disps, disps, cropmasks, cropdisps, fullmasks, fulldisps, intrinsics, trackinfo,
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
@@ -142,7 +143,7 @@ def train(args):
                 res_loss, res_metrics = losses.residual_loss(residuals)
                 flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, trackinfo, intrinsics, graph)
 
-                loss = args.w1 * geo_loss  + args.w1 * Obgeo_loss + args.w2 * res_loss + args.w3 * flo_loss
+                loss = args.w1 * geo_loss  + args.w1 * Obgeo_loss + args.w2 * res_loss + args.w3 * flo_loss + args.w3 * flow_metrics['lowerror'] + args.w3 * flow_metrics['dynamicerror']
                 loss.backward()
 
                 Gs = poses_est[-1].detach()
@@ -161,6 +162,11 @@ def train(args):
                 'res_loss':res_loss.item(),
             }
             metrics.update(loss)
+            flow = {
+                'lowerror': flow_metrics['lowerror'].item(),
+                'dynamicerror': flow_metrics['dynamicerror'].item(),
+            }
+            metrics.update(flow)
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
@@ -185,16 +191,16 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='nocheckpoint_multiple_lr50', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore')
+    parser.add_argument('--name', default='gtdepth_onebatch_dyerror', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default = 'droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2/Scene20', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=8)
+    parser.add_argument('--iters', type=int, default=2)
     parser.add_argument('--steps', type=int, default=80000)
-    parser.add_argument('--lr', type=float, default=0.0005)
+    parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=5)
 
