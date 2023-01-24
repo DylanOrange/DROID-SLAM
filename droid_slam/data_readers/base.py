@@ -95,17 +95,18 @@ class RGBDDataset(data.Dataset):
         arearank = torch.argsort(area)
         fre = torch.bincount(trackid)
         frerank = torch.where(fre == torch.amax(fre))[0]
-        TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))#找出出现频率最大的几辆车
+        TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))#找出出现频率最大的几辆车
         if TRACKID.shape[0] > 8:
-            TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-8:]))
+            TRACKID = torch.from_numpy(np.intersect1d(arearank[-8:], frerank))
         if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
             frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1])))[0]
-            TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
+            TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))
             if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
                 frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1,torch.amax(fre)-2])))[0]
-                TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
-        TRACKID = TRACKID[TRACKID!=0]-1
-        # TRACKID = torch.tensor([TRACKID[0]])
+                TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))
+        TRACKID = TRACKID[TRACKID!=0]
+        TRACKID = arearank[torch.isin(arearank, TRACKID).nonzero()[-1]]-1#最大面积的
+        # TRACKID = TRACKID[torch.randint(len(TRACKID), (1,))]
         
         bins = torch.concat(count)
         Apperance = []
@@ -229,13 +230,15 @@ class RGBDDataset(data.Dataset):
             depths.append(self.__class__.depth_read(depths_list[i]))
             poses.append(poses_list[i])
             intrinsics.append(intrinsics_list[i])
-            objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i]))
+            objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[0])
+            sampledmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[1])
 
         images = np.stack(images)
         objectmasks = np.stack(objectmasks)
         depths = np.stack(depths)
         poses = np.stack(poses)
         intrinsics = np.stack(intrinsics)
+        sampledmasks = np.stack(sampledmasks)
 
         images = torch.from_numpy(images)
         N, h0, w0 = images.shape[:3]
@@ -243,6 +246,7 @@ class RGBDDataset(data.Dataset):
         depths = torch.from_numpy(depths)
         poses = torch.from_numpy(poses)
         objectmasks = torch.from_numpy(objectmasks).int()
+        sampledmasks = torch.from_numpy(sampledmasks).int()
         intrinsics = torch.from_numpy(intrinsics)
         intrinsics[:, 0:2] *= ((self.w1//self.scale)/ w0)
         intrinsics[:, 2:4] *= ((self.h1//self.scale)/ h0)
@@ -253,8 +257,9 @@ class RGBDDataset(data.Dataset):
 
         TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)#
 
-        objectmasks = torch.nn.functional.interpolate(objectmasks[:, None].double(), size = (self.h1//self.cropscale, self.w1//self.cropscale)).int().squeeze(1)#5,375,1242 ->5,120,404
-        corner, rec = self.cornerinfo(objectmasks, TRACKID)
+
+        # objectmasks = torch.nn.functional.interpolate(objectmasks[:, None].double(), size = (self.h1//self.cropscale, self.w1//self.cropscale), mode= 'bicubic').int().squeeze(1)#5,375,1242 ->5,120,404
+        corner, rec = self.cornerinfo(sampledmasks, TRACKID)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].clone()
@@ -262,11 +267,16 @@ class RGBDDataset(data.Dataset):
         #     cv2.imwrite('./visualize/mask'+str(idx)+'.png', np.array(vis_image))
 
         images = images.permute(0, 3, 1, 2)
-        images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1))
+        images = torch.nn.functional.interpolate(images.float(), size = (self.h1,self.w1), mode = 'bilinear')
 
         objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)
 
-        fullmasks = self.construct_objectmask(TRACKID, objectmasks)#7,5,120,404
+        quanmask = torch.nn.functional.interpolate(objectmasks[:, None].float(), size = (self.h1, self.w1)).squeeze(1).int()
+        quanmask = self.construct_objectmask(TRACKID, quanmask)
+
+        fullmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
+        # sampledmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
+
         cropmasks = crop(fullmasks[..., None], corner, rec).squeeze(-1)#7,5,99,217
         
         B = len(TRACKID)
@@ -274,7 +284,7 @@ class RGBDDataset(data.Dataset):
         objectmasks = torch.nn.functional.interpolate(objectmasks, size = (self.h1//self.scale, self.w1//self.scale))#35,1,120,404 ->35,1,30,101
         objectmasks = objectmasks.view(B, N, self.h1//self.scale, self.w1//self.scale)#7,5,30,101
 
-        sampleddepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.scale, self.w1//self.scale))#5,375,1242 ->5,30,101
+        sampleddepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1, self.w1))#5,375,1242 ->5,240,808
         disps = 1.0/sampleddepths.squeeze(1)
 
         cropdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.cropscale, self.w1//self.cropscale))#5,1,375,1242 ->5,1,120,404
@@ -284,6 +294,9 @@ class RGBDDataset(data.Dataset):
         cropdepths = crop(cropdepths[..., None], corner, rec, depth =True)#7,5,99,217
         cropdisps = 1.0/cropdepths.squeeze(-1)
 
+        if torch.isin(12, TRACKID) and 1.0/torch.mean(cropdisps[cropmasks>0.0]) > 20.0:
+            cropdisps[:] = -0.1
+            
         batchgrid = batch_grid(corner, rec)
         
         trackinfo = {
@@ -302,7 +315,7 @@ class RGBDDataset(data.Dataset):
         #     disps = disps / s
         #     poses[...,:3] *= s
 
-        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), cropmasks.to('cuda'), cropdisps.to('cuda'), fullmasks.to('cuda'), fulldepths.to('cuda'), intrinsics.to('cuda'), trackinfo
+        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), cropmasks.to('cuda'), cropdisps.to('cuda'), fullmasks.to('cuda'), fulldepths.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo
 
     def __len__(self):
         return len(self.dataset_index)

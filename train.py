@@ -93,17 +93,14 @@ def train(args):
     should_keep_training = True
     total_steps = 0
 
-    # geo_sum = 0.0
-    # geo_ob_sum = 0.0
-    # flow_sum = 0.0
-    # res_sum = 0.0
-
     while should_keep_training:
         for i_batch, item in enumerate(train_loader):
             optimizer.zero_grad()
 
-            images, poses, objectposes, objectmasks, disps, cropmasks, cropdisps, fullmasks, fulldisps, intrinsics, trackinfo = item
+            images, poses, objectposes, objectmasks, disps, cropmasks, cropdisps, fullmasks, fulldisps, quanmask, intrinsics, trackinfo = item
 
+            if torch.mean(cropdisps) < 0.0:
+                continue
             # convert poses w2c -> c2w
             Ps = SE3(poses)#这里暂时使用w2c
             ObjectPs = SE3(objectposes[0]).inv()
@@ -126,8 +123,8 @@ def train(args):
             for n in range(len(trackinfo['trackid'][0])):
                 ObjectGs.data[n, trackinfo['apperance'][n][0][0]] = ObjectPs.data[n, trackinfo['apperance'][n][0][0]].clone()
                 ObjectGs.data[n, trackinfo['apperance'][n][0][1:]] = ObjectPs.data[n, trackinfo['apperance'][n][0][1]].clone()
-            disp0 = torch.ones_like(disps)
-
+            disp0 = torch.ones_like(disps[:,:,3::8,3::8])
+            # disp0 = disps[:,:,3::8,3::8]
             # perform random restarts
 
             r = 0
@@ -135,38 +132,38 @@ def train(args):
                 r = rng.random()
                 
                 # intrinsics0 = intrinsics / 8.0
-                poses_est, objectposes_est, disps_est, residuals, flow_metrics = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disps, disps, cropmasks, cropdisps, fullmasks, fulldisps, intrinsics, trackinfo,
+                poses_est, objectposes_est, disps_est,  static_residual_list, dyna_residual_list, flow_low_list, flow_high_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps[:,:,3::8,3::8], cropmasks, cropdisps, fullmasks, fulldisps, intrinsics, trackinfo,
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
-                res_loss, res_metrics = losses.residual_loss(residuals)
-                flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, trackinfo, intrinsics, graph)
+                static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
+                dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list)
+                error_low, error_high, error_st, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, cropmasks, cropdisps, fullmasks, fulldisps, quanmask, trackinfo, intrinsics, graph, flow_low_list, flow_high_list)
 
-                loss = args.w1 * geo_loss  + args.w1 * Obgeo_loss + args.w2 * res_loss + args.w3 * flo_loss + args.w3 * flow_metrics['lowerror'] + args.w3 * flow_metrics['dynamicerror']
+                loss =  args.w1*geo_loss + args.w1 * Obgeo_loss + args.w2 * static_resi_loss + args.w2 * dyna_resi_loss + args.w3 * error_low + args.w3 * error_high + args.w3 * error_st
                 loss.backward()
 
                 Gs = poses_est[-1].detach()
                 ObjectGs = objectposes_est[-1].detach()
-                disp0 = disps_est[-1].detach()
+                disp0 = disps_est[-1][:,:,3::4,3::4].detach()
 
             metrics = {}
             metrics.update(geo_metrics)
             metrics.update(Obgeo_metrics)
-            metrics.update(res_metrics)
-            metrics.update(flo_metrics)
+            metrics.update(static_resid_metrics)
+            metrics.update(dyna_resid_metrics)
+            metrics.update(flow_metrics)
             loss = {
                 'geo_loss':geo_loss.item(),
                 'Obgeo_loss':Obgeo_loss.item(),
-                'flo_loss':flo_loss.item(),
-                'res_loss':res_loss.item(),
+                'error_low':error_low.item(),
+                'error_high':error_high.item(),
+                'error_st':error_st.item(),           
+                'static_resi_loss':static_resi_loss.item(),
+                'dyna_resi_loss':dyna_resi_loss.item(),
             }
             metrics.update(loss)
-            flow = {
-                'lowerror': flow_metrics['lowerror'].item(),
-                'dynamicerror': flow_metrics['dynamicerror'].item(),
-            }
-            metrics.update(flow)
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
@@ -177,7 +174,7 @@ def train(args):
             # if gpu == 0:
             logger.push(metrics)
 
-            if total_steps % 1000 == 0:
+            if total_steps % 2000 == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                 torch.save(model.state_dict(), PATH)
 
@@ -191,14 +188,14 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='gtdepth_onebatch_dyerror', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default = 'droid.pth')
+    parser.add_argument('--name', default='test', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2/Scene20', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=2)
+    parser.add_argument('--iters', type=int, default=1)
     parser.add_argument('--steps', type=int, default=80000)
     parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)

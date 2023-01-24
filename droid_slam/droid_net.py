@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,38 +10,48 @@ from modules.corr import CorrBlock
 from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
-from lietorch import SE3
-from geom.ba import BA, dynamicBA, fulldynamicBA
+from lietorch import SE3, SO3, Sim3
+from geom.ba import BA, dynamicBA, fulldynamicBA, cameraBA
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
+from geom.flow_vis_utils import flow_to_image
 
 from torch_scatter import scatter_mean
 
 
-def cvx_upsample(data, mask):
+def cvx_upsample(data, mask, time, disps = None):
     """ upsample pixel-wise transformation field """
     batch, ht, wd, dim = data.shape
     data = data.permute(0, 3, 1, 2)
-    mask = mask.view(batch, 1, 9, 4, 4, ht, wd)
+    mask = mask.view(batch, 1, 9, time, time, ht, wd)
     mask = torch.softmax(mask, dim=2)
 
     #NOTE: raft这里data先乘了8
-    up_data = F.unfold(data, [3,3], padding=1)
+    if disps:
+        up_data = F.unfold(data, [3,3], padding=1)
+    else:
+        up_data = F.unfold(time*data, [3,3], padding=1)
     up_data = up_data.view(batch, dim, 9, 1, 1, ht, wd)
 
     up_data = torch.sum(mask * up_data, dim=2)
     up_data = up_data.permute(0, 4, 2, 5, 3, 1)
-    up_data = up_data.reshape(batch, 4*ht, 4*wd, dim)
+    up_data = up_data.reshape(batch, time*ht, time*wd, dim)
 
     return up_data
 
-def upsample_disp(disp, mask):
-    batch, num, ht, wd, dim = disp.shape
-    disp = disp.view(batch*num, ht, wd, dim)
+def upsample_flow(flow, mask, time, disps = None):
+    batch, num, ht, wd, dim = flow.shape
+    flow = flow.view(batch*num, ht, wd, dim)
     mask = mask.view(batch*num, -1, ht, wd)
-    return cvx_upsample(4*disp, mask).view(batch, num, 4*ht, 4*wd, dim)
+    return cvx_upsample(flow, mask, time, disps).view(batch, num, time*ht, time*wd, dim)
 
+def upsample4(flow, mode = 'nearest'):
+    B, N, ht, wd, ch = flow.shape
+    flow = flow.permute(0,1,4,2,3).reshape(B*N, ch, ht, wd)
+    upsampled_flow = 4*F.interpolate(flow, scale_factor=4, mode=mode)
+    upsampled_flow = upsampled_flow.permute(0,2,3,1).reshape(B, N, 4*ht, 4*wd, ch)
+    return  upsampled_flow
 
 class GraphAgg(nn.Module):
     def __init__(self):
@@ -54,11 +65,11 @@ class GraphAgg(nn.Module):
             GradientClip(),
             nn.Softplus())
 
+        # self.upmask_flow = nn.Sequential(
+        #     nn.Conv2d(128, 4*4*9, 1, padding=0))
+
         self.upmask_flow = nn.Sequential(
             nn.Conv2d(128, 4*4*9, 1, padding=0))
-
-        # self.upmask_flow = nn.Sequential(
-        #     nn.Conv2d(128, 8*8*9, 1, padding=0))
 
     def forward(self, net, ii):
         batch, num, ch, ht, wd = net.shape
@@ -70,21 +81,21 @@ class GraphAgg(nn.Module):
         net = net.view(batch, num, 128, ht, wd)#1,14,128,30,101
         net_less = scatter_mean(net, ix, dim=1)#1,5,128,30,101
 
-        net = net.view(-1, 128, ht, wd)#14,128,30,101
+        # net = net.view(-1, 128, ht, wd)#14,128,30,101
         net_less = net_less.view(-1, 128, ht, wd)#5,128,30,101
 
-        less_size = net_less.shape[0]
-        net = torch.cat([net_less, net], dim = 0)
-        net = self.relu(self.conv2(net))#19,128,30,101
+        # less_size = net_less.shape[0]
+        # net = torch.cat([net_less, net], dim = 0)
+        net = self.relu(self.conv2(net_less))#19,128,30,101
 
-        net_less = net[0:less_size]
-        net_more = net[less_size:]
+        # net_less = net[0:less_size]
+        # net_more = net[less_size:]
 
         eta = self.eta(net_less).view(batch, -1, ht, wd)
-        # upmask_disp = self.upmask_disp(net_more).view(batch, -1, 8*8*9, ht, wd)
-        upmask_flow = self.upmask_flow(net_more).view(batch, -1, 4*4*9, ht, wd)#1,14,576,30,101
+        upmask_disp = self.upmask_flow(net_less).view(batch, -1, 4*4*9, ht, wd)
+        # upmask_flow = self.upmask_flow(net_more).view(batch, -1, 4*4*9, ht, wd)#1,14,576,30,101
 
-        return .01 * eta, upmask_flow
+        return .01 * eta, upmask_disp
 
 class UpdateModule(nn.Module):
     def __init__(self):
@@ -110,6 +121,13 @@ class UpdateModule(nn.Module):
             GradientClip(),
             nn.Sigmoid())
 
+        # self.dyweight = nn.Sequential(
+        #     nn.Conv2d(128, 128, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(128, 2, 3, padding=1),
+        #     GradientClip(),
+        #     nn.Sigmoid())
+
         self.delta = nn.Sequential(
             nn.Conv2d(128, 128, 3, padding=1),
             nn.ReLU(inplace=True),
@@ -118,6 +136,16 @@ class UpdateModule(nn.Module):
 
         self.gru = ConvGRU(128, 128+128+64)
         self.agg = GraphAgg()
+
+        self.mask_flow = nn.Sequential(
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 4*4*9, 1, padding=0))
+
+        self.mask_weight = nn.Sequential(
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 4*4*9, 1, padding=0))
 
     def forward(self, net, inp, corr, flow=None, ii=None, jj=None):
         """ RaftSLAM update operator """
@@ -140,18 +168,23 @@ class UpdateModule(nn.Module):
         ### update variables ###
         delta = self.delta(net).view(*output_dim)
         weight = self.weight(net).view(*output_dim)
+        # dyweight = self.dyweight(net).view(*output_dim)
+
+        mask_flow = .25*self.mask_flow(net).view(*output_dim)
+        mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
         delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
         weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
+        # dyweight = dyweight.permute(0,1,3,4,2)[...,:2].contiguous()
 
         net = net.view(*output_dim)
 
         if ii is not None:
             eta, upmask = self.agg(net, ii.to(net.device))
-            return net, delta, weight, eta, upmask
+            return net, delta, weight, mask_flow, mask_weight, eta, upmask
 
         else:
-            return net, delta, weight
+            return net, delta, weight, mask_flow, mask_weight
 
 
 class DroidNet(nn.Module):
@@ -214,15 +247,13 @@ class DroidNet(nn.Module):
         coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
         target = coords1.clone()
 
-        # highintrinsics = intrinsics.clone()
-        # highintrinsics[...,:] *= 4
+        highintrinsics = intrinsics.clone()
+        highintrinsics[...,:] *= 4
 
-        lowgtflow, _ = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
-        # highgtflow, _ = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
+        # lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
 
-        Gs_list, disp_list, residual_list, ObjectGs_list = [], [], [], []
-        lowerror_list, higherror_list, dynamicerror_list = [], [], []
-        lowerrorpx_list, higherrorpx_list, dynamicerrorpx_list = [], [], []
+        Gs_list, disp_list, ObjectGs_list, flow_low_list, flow_high_list, static_residual_list, dyna_residual_list = [], [], [], [], [], [], []
 
         for step in range(num_steps):
             Gs = Gs.detach()
@@ -239,45 +270,80 @@ class DroidNet(nn.Module):
             motion = torch.cat([flow, resd], dim=-1)
             motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0).float()
 
-            net, delta, weight, eta, upmask = \
+            net, delta, weight, mask_flow, mask_weight, eta, mask_disp = \
                 self.update(net, inp, corr, motion, ii, jj)
 
             target = coords1 + delta
 
-            # predicted_flow = upsample_disp(target - coords0, upmask) + coords_crop
+            flow_inter = upsample_flow(target - coords0, mask_flow, 4) + coords_crop
+            cropweight = upsample_flow(weight, mask_weight,4)
 
-            lowerror, lowerrorpx = flow_error(target, lowgtflow)
-            # higherror, higherrorpx = flow_error(predicted_flow, highgtflow)
-            dynamicerror, dynamicerrorpx = flow_error(target, lowgtflow, objectmasks[:,ii])
+            # flow_inter = highgtflow.clone()
+            # flow_inter = torch.normal(mean=highgtflow, std=1e+0)
 
-            # cropflow = pops.crop(predicted_flow.expand(B,-1,-1,-1,-1), corners, rec)#7,14,109,210,2
+            # vis_highmask = highmask.squeeze(-1)
+            # vis_fullmask = fullmasks[:, ii]
+            # flow_inter_vis = flow_to_image(flow_inter[0,0].cpu().numpy(), vis_highmask[0,0].cpu().numpy())
+            # dyna_flow_inter_vis = flow_to_image(flow_inter[0,0].cpu().numpy(), vis_fullmask[0,0].cpu().numpy())
+            # cv2.imwrite('flow_inter_{}.png'.format(0),flow_inter_vis)
+            # cv2.imwrite('dyna_flow_inter_{}.png'.format(0),dyna_flow_inter_vis)
 
-            # eta = torch.zeros_like(eta)
+            cropflow = pops.crop(flow_inter.expand(B,-1,-1,-1,-1), corners, rec)
+            cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
+            # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
 
-            #NOTE: weight可能也需要上采样,先用1代替
-            for i in range(5):
-                # Gs, ObjectGs, cropdisps = fulldynamicBA(cropflow, weight, ObjectGs, cropmasks, trackinfo, validmask, None, Gs, cropdisps, highintrinsics, ii, jj, fixedp=2)
-                Gs, ObjectGs, disps = fulldynamicBA(lowgtflow, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+            # lowmask = lowmask.expand(-1,-1,-1,-1,2)
 
-            coords1, valid_mask = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
-            residual = (target - coords1)
+            for i in range(2):
+                Gs, disps =  BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2, rig=1)
 
+            # for i in range(2):
+            #     Gs, ObjectGs, disps = cameraBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+
+            upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
+            cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
+
+            for i in range(2):
+                Gs, ObjectGs, cropdisps = dynamicBA(cropflow, cropweight, ObjectGs, cropmasks, trackinfo, validmask, None, Gs, cropdisps, highintrinsics, ii, jj, fixedp=2)
+
+            # coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj, jacobian=True)
+            coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
+        
+            # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
+            static_residual = (target - coords1)*valid_static
+            dyna_residual = (cropflow - coords_resi)*valid_dyna
+            
+            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+            # print('-----------------')
+            # print('frames are {}'.format(trackinfo['frames']))
+            # print('trackid is {}'.format(trackinfo['trackid'].item()))
+            # print('loss is {}'.format(loss.item()))
+            # print('r_err is {}'.format(r_err.item()))
+            # print('t_err is {}'.format(t_err.item()))
+
+            # print('ob_loss is {}'.format(ob_loss.item()))
+            # print('ob_r_err is {}'.format(ob_r_err.item()))
+            # print('ob_t_err is {}'.format(ob_t_err.item()))
+
+            # if ob_loss > 2.0:
+            #     print('{} has too large loss!'.format(trackinfo['trackid'].item()))
+            #     print('frames are {}'.format(trackinfo['frames']))
+            #     print('its ob_loss is {}'.format(ob_loss.item()))
+            #     print('its r_error is {}'.format(ob_r_err.item()))
+            #     print('its t_err is {}'.format(ob_t_err.item()))
+
+            # print('-----------------')
             Gs_list.append(Gs)
             ObjectGs_list.append(ObjectGs)
-            disp_list.append(disps)
-            residual_list.append(valid_mask * residual)
+            disp_list.append(upsampled_disps[...,0])
+            static_residual_list.append(static_residual)
+            dyna_residual_list.append(dyna_residual)
+            flow_low_list.append(target)
+            flow_high_list.append(flow_inter)
 
-            lowerror_list.append(lowerror)
-            # higherror_list.append(higherror)
-            dynamicerror_list.append(dynamicerror)
-
-            lowerrorpx_list.append(lowerrorpx)
-            # higherrorpx_list.append(higherrorpx)
-            dynamicerrorpx_list.append(dynamicerrorpx)
-
-        metrics = flow_metrics(lowerror_list, higherror_list, dynamicerror_list, lowerrorpx_list, higherrorpx_list, dynamicerrorpx_list)
-
-        return Gs_list, ObjectGs_list, disp_list, residual_list, metrics
+        return Gs_list, ObjectGs_list, disp_list, static_residual_list, dyna_residual_list, flow_low_list, flow_high_list
 
 def add_neighborhood_factors(t0, t1, r=2):
     """ add edges between neighboring frames within radius r """
@@ -307,18 +373,55 @@ def flow_metrics(lowerror_list, higherror_list, dynamicerror_list, lowerrorpx_li
 
     lowerror = torch.mean(torch.stack(lowerror_list))
     lowerrorpx = torch.mean(torch.stack(lowerrorpx_list))
-    # higherror = torch.mean(torch.stack(higherror_list))
-    # higherrorpx = torch.mean(torch.stack(higherrorpx_list))
+    higherror = torch.mean(torch.stack(higherror_list))
+    higherrorpx = torch.mean(torch.stack(higherrorpx_list))
     dynamicerror = torch.mean(torch.stack(dynamicerror_list))
     dynamicerrorpx = torch.mean(torch.stack(dynamicerrorpx_list))
 
     metrics = {
                 'lowerror':lowerror,
                 'lowerrorpx':lowerrorpx,
-                # 'higherror':higherror,
-                # 'higherrorpx':higherrorpx,
+                'higherror':higherror,
+                'higherrorpx':higherrorpx,
                 'dynamicerror':dynamicerror,
                 'dynamicerrorpx':dynamicerrorpx,
     }
-
     return metrics
+
+def fit_scale(Ps, Gs):
+    b = Ps.shape[0]
+    t1 = Ps.data[...,:3].detach().reshape(b, -1)
+    t2 = Gs.data[...,:3].detach().reshape(b, -1)
+
+    s = (t1*t2).sum(-1) / ((t2*t2).sum(-1) + 1e-8)
+    return s
+
+def pose_metrics(dE):
+    """ Translation/Rotation/Scaling metrics from Sim3 """
+    t, q, s = dE.data.split([3, 4, 1], -1)
+    ang = SO3(q).log().norm(dim=-1)
+
+    # convert radians to degrees
+    r_err = (180 / np.pi) * ang
+    t_err = t.norm(dim=-1)
+    s_err = (s - 1.0).abs()
+    return r_err, t_err, s_err
+
+def geoloss(objectposes, object_est, ii, jj):
+    dP = objectposes[:,jj] * objectposes[:,ii].inv()
+    dG = object_est[:,jj] * object_est[:,ii].inv()
+
+    d = (dG * dP.inv()).log()
+
+    tau, phi = d.split([3,3], dim=-1)
+    geodesic_loss = tau.norm(dim=-1).mean() + phi.norm(dim=-1).mean()
+
+    # s = fit_scale(dP, dG)
+    # dG = dG.scale(s[:,None])
+
+    dE = Sim3(dG * dP.inv()).detach()
+    r_err, t_err, s_err = pose_metrics(dE)
+    r_err = r_err.mean()
+    t_err = t_err.mean()
+
+    return geodesic_loss, r_err, t_err
