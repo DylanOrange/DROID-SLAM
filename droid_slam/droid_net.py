@@ -68,8 +68,8 @@ class GraphAgg(nn.Module):
         # self.upmask_flow = nn.Sequential(
         #     nn.Conv2d(128, 4*4*9, 1, padding=0))
 
-        self.upmask_flow = nn.Sequential(
-            nn.Conv2d(128, 4*4*9, 1, padding=0))
+        self.upmask = nn.Sequential(
+            nn.Conv2d(128, 8*8*9, 1, padding=0))
 
     def forward(self, net, ii):
         batch, num, ch, ht, wd = net.shape
@@ -92,7 +92,7 @@ class GraphAgg(nn.Module):
         # net_more = net[less_size:]
 
         eta = self.eta(net_less).view(batch, -1, ht, wd)
-        upmask_disp = self.upmask_flow(net_less).view(batch, -1, 4*4*9, ht, wd)
+        upmask_disp = self.upmask(net_less).view(batch, -1, 8*8*9, ht, wd)
         # upmask_flow = self.upmask_flow(net_more).view(batch, -1, 4*4*9, ht, wd)#1,14,576,30,101
 
         return .01 * eta, upmask_disp
@@ -137,15 +137,15 @@ class UpdateModule(nn.Module):
         self.gru = ConvGRU(128, 128+128+64)
         self.agg = GraphAgg()
 
-        self.mask_flow = nn.Sequential(
-            nn.Conv2d(128, 256, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 4*4*9, 1, padding=0))
+        # self.mask_flow = nn.Sequential(
+        #     nn.Conv2d(128, 256, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(256, 4*4*9, 1, padding=0))
 
-        self.mask_weight = nn.Sequential(
-            nn.Conv2d(128, 128, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 4*4*9, 1, padding=0))
+        # self.mask_weight = nn.Sequential(
+        #     nn.Conv2d(128, 128, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(128, 4*4*9, 1, padding=0))
 
     def forward(self, net, inp, corr, flow=None, ii=None, jj=None):
         """ RaftSLAM update operator """
@@ -170,8 +170,8 @@ class UpdateModule(nn.Module):
         weight = self.weight(net).view(*output_dim)
         # dyweight = self.dyweight(net).view(*output_dim)
 
-        mask_flow = .25*self.mask_flow(net).view(*output_dim)
-        mask_weight = .25*self.mask_weight(net).view(*output_dim)
+        # mask_flow = .25*self.mask_flow(net).view(*output_dim)
+        # mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
         delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
         weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
@@ -181,10 +181,10 @@ class UpdateModule(nn.Module):
 
         if ii is not None:
             eta, upmask = self.agg(net, ii.to(net.device))
-            return net, delta, weight, mask_flow, mask_weight, eta, upmask
+            return net, delta, weight, eta, upmask
 
         else:
-            return net, delta, weight, mask_flow, mask_weight
+            return net, delta, weight
 
 
 class DroidNet(nn.Module):
@@ -213,17 +213,17 @@ class DroidNet(nn.Module):
         return fmaps, net, inp
 
 
-    def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disps, gtdisps, cropmasks, cropdisps, fullmasks, fulldisps, intrinsics, trackinfo, graph=None, num_steps=12, fixedp=2):
+    def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disps, gtdisps, intrinsics, trackinfo, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
         #Ps is ground truth
         objectmasks = objectmasks[0]
-        corners = trackinfo['corner'][0]
-        rec = trackinfo['rec'][0]
-        cropmasks = cropmasks[0]
-        cropdisps = cropdisps[0]
-        fullmasks = fullmasks[0]
+        # corners = trackinfo['corner'][0]
+        # rec = trackinfo['rec'][0]
+        # cropmasks = cropmasks[0]
+        # cropdisps = cropdisps[0]
+        # fullmasks = fullmasks[0]
 
-        B = objectmasks.shape[0]
+        # B = objectmasks.shape[0]
 
         ii, jj, _ = graph_to_edge_list(graph)
 
@@ -236,7 +236,7 @@ class DroidNet(nn.Module):
 
         ht, wd = images.shape[-2:]
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
-        coords_crop = pops.coords_grid(ht//2, wd//2, device=images.device)
+        # coords_crop = pops.coords_grid(ht//2, wd//2, device=images.device)
         
         validmasklist = []
         for n in range(len(trackinfo['trackid'][0])):
@@ -247,13 +247,13 @@ class DroidNet(nn.Module):
         coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
         target = coords1.clone()
 
-        highintrinsics = intrinsics.clone()
-        highintrinsics[...,:] *= 4
+        # highintrinsics = intrinsics.clone()
+        # highintrinsics[...,:] *= 4
 
-        # lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
         # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
 
-        Gs_list, disp_list, ObjectGs_list, flow_low_list, flow_high_list, static_residual_list, dyna_residual_list = [], [], [], [], [], [], []
+        Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, dyna_residual_list = [], [], [], [], [], []
 
         for step in range(num_steps):
             Gs = Gs.detach()
@@ -270,13 +270,13 @@ class DroidNet(nn.Module):
             motion = torch.cat([flow, resd], dim=-1)
             motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0).float()
 
-            net, delta, weight, mask_flow, mask_weight, eta, mask_disp = \
+            net, delta, weight, eta, mask_disp = \
                 self.update(net, inp, corr, motion, ii, jj)
 
             target = coords1 + delta
 
-            flow_inter = upsample_flow(target - coords0, mask_flow, 4) + coords_crop
-            cropweight = upsample_flow(weight, mask_weight,4)
+            # flow_inter = upsample_flow(target - coords0, mask_flow, 4) + coords_crop
+            # cropweight = upsample_flow(weight, mask_weight,4)
 
             # flow_inter = highgtflow.clone()
             # flow_inter = torch.normal(mean=highgtflow, std=1e+0)
@@ -288,44 +288,37 @@ class DroidNet(nn.Module):
             # cv2.imwrite('flow_inter_{}.png'.format(0),flow_inter_vis)
             # cv2.imwrite('dyna_flow_inter_{}.png'.format(0),dyna_flow_inter_vis)
 
-            cropflow = pops.crop(flow_inter.expand(B,-1,-1,-1,-1), corners, rec)
-            cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
+            # cropflow = pops.crop(flow_inter.expand(B,-1,-1,-1,-1), corners, rec)
+            # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
             # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
 
             # lowmask = lowmask.expand(-1,-1,-1,-1,2)
 
-            for i in range(2):
-                Gs, disps =  BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2, rig=1)
+            # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
+            # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
 
-            # for i in range(2):
-            #     Gs, ObjectGs, disps = cameraBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+            for i in range(5):
+                Gs, ObjectGs, disps = dynamicBA(lowgtflow, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
-            upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
-            cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
-
-            for i in range(2):
-                Gs, ObjectGs, cropdisps = dynamicBA(cropflow, cropweight, ObjectGs, cropmasks, trackinfo, validmask, None, Gs, cropdisps, highintrinsics, ii, jj, fixedp=2)
-
-            # coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
-            coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj, jacobian=True)
-            coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
+            coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            # coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
         
             # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
             static_residual = (target - coords1)*valid_static
-            dyna_residual = (cropflow - coords_resi)*valid_dyna
+            dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
             
-            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
-            # print('-----------------')
-            # print('frames are {}'.format(trackinfo['frames']))
-            # print('trackid is {}'.format(trackinfo['trackid'].item()))
-            # print('loss is {}'.format(loss.item()))
-            # print('r_err is {}'.format(r_err.item()))
-            # print('t_err is {}'.format(t_err.item()))
+            loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+            ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+            print('-----------------')
+            print('frames are {}'.format(trackinfo['frames']))
+            print('trackid is {}'.format(trackinfo['trackid'].item()))
+            print('loss is {}'.format(loss.item()))
+            print('r_err is {}'.format(r_err.item()))
+            print('t_err is {}'.format(t_err.item()))
 
-            # print('ob_loss is {}'.format(ob_loss.item()))
-            # print('ob_r_err is {}'.format(ob_r_err.item()))
-            # print('ob_t_err is {}'.format(ob_t_err.item()))
+            print('ob_loss is {}'.format(ob_loss.item()))
+            print('ob_r_err is {}'.format(ob_r_err.item()))
+            print('ob_t_err is {}'.format(ob_t_err.item()))
 
             # if ob_loss > 2.0:
             #     print('{} has too large loss!'.format(trackinfo['trackid'].item()))
@@ -337,13 +330,12 @@ class DroidNet(nn.Module):
             # print('-----------------')
             Gs_list.append(Gs)
             ObjectGs_list.append(ObjectGs)
-            disp_list.append(upsampled_disps[...,0])
+            disp_list.append(upsample_flow(disps[..., None], mask_disp, 8, True)[...,0])
             static_residual_list.append(static_residual)
-            dyna_residual_list.append(dyna_residual)
+            dyna_residual_list.append(dyna_residual[dyna_residual>0])
             flow_low_list.append(target)
-            flow_high_list.append(flow_inter)
 
-        return Gs_list, ObjectGs_list, disp_list, static_residual_list, dyna_residual_list, flow_low_list, flow_high_list
+        return Gs_list, ObjectGs_list, disp_list, static_residual_list, dyna_residual_list, flow_low_list
 
 def add_neighborhood_factors(t0, t1, r=2):
     """ add edges between neighboring frames within radius r """

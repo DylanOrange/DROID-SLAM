@@ -97,10 +97,10 @@ def train(args):
         for i_batch, item in enumerate(train_loader):
             optimizer.zero_grad()
 
-            images, poses, objectposes, objectmasks, disps, cropmasks, cropdisps, fullmasks, fulldisps, quanmask, intrinsics, trackinfo = item
+            images, poses, objectposes, objectmasks, disps, quanmask, intrinsics, trackinfo = item
 
-            if torch.mean(cropdisps) < 0.0:
-                continue
+            # if torch.mean(cropdisps) < 0.0:
+            #     continue
             # convert poses w2c -> c2w
             Ps = SE3(poses)#这里暂时使用w2c
             ObjectPs = SE3(objectposes[0]).inv()
@@ -132,21 +132,21 @@ def train(args):
                 r = rng.random()
                 
                 # intrinsics0 = intrinsics / 8.0
-                poses_est, objectposes_est, disps_est,  static_residual_list, dyna_residual_list, flow_low_list, flow_high_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps[:,:,3::8,3::8], cropmasks, cropdisps, fullmasks, fulldisps, intrinsics, trackinfo,
+                poses_est, objectposes_est, disps_est,  static_residual_list, dyna_residual_list, flow_low_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps[:,:,3::8,3::8], intrinsics, trackinfo,
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
                 static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
                 dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list)
-                error_low, error_high, error_st, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, cropmasks, cropdisps, fullmasks, fulldisps, quanmask, trackinfo, intrinsics, graph, flow_low_list, flow_high_list)
+                error_low, error_high, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list)
 
-                loss =  args.w1*geo_loss + args.w1 * Obgeo_loss + args.w2 * static_resi_loss + args.w2 * dyna_resi_loss + args.w3 * error_low + args.w3 * error_high + args.w3 * error_st
+                loss =  args.w1*geo_loss + args.w1 * Obgeo_loss + args.w2 * static_resi_loss + args.w2 * dyna_resi_loss + args.w3 * error_low + args.w3 * error_high
                 loss.backward()
 
                 Gs = poses_est[-1].detach()
                 ObjectGs = objectposes_est[-1].detach()
-                disp0 = disps_est[-1][:,:,3::4,3::4].detach()
+                disp0 = disps_est[-1][:,:,3::8,3::8].detach()
 
             metrics = {}
             metrics.update(geo_metrics)
@@ -158,8 +158,7 @@ def train(args):
                 'geo_loss':geo_loss.item(),
                 'Obgeo_loss':Obgeo_loss.item(),
                 'error_low':error_low.item(),
-                'error_high':error_high.item(),
-                'error_st':error_st.item(),           
+                'error_high':error_high.item(), 
                 'static_resi_loss':static_resi_loss.item(),
                 'dyna_resi_loss':dyna_resi_loss.item(),
             }

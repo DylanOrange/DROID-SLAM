@@ -166,7 +166,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
 
     ### 1: compute jacobians and residuals ###
     coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
-        poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = TRUE, batch = True, batch_grid = batch_grid)
+        poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = TRUE, batch = False, batch_grid = None)
 
     # r = (target - coords)*valid*weight
     # residual = r[r!=0.0]
@@ -177,8 +177,8 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    Jci = torch.zeros_like(Jci)
-    Jcj = torch.zeros_like(Jcj)
+    # Jci = torch.zeros_like(Jci)
+    # Jcj = torch.zeros_like(Jcj)
     Joi = Joi.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
     Joj = Joj.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
 
@@ -257,8 +257,8 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     C = safe_scatter_add_vec(Ck, kk, M)#1,5,3030
     w = safe_scatter_add_vec(wk, kk, M)#1,5,3030 
 
-    C = C + 1e-7
-    # C = C + eta.view(*C.shape) + 1e-7
+    # C = C + 1e-7
+    C = C + eta.view(*C.shape) + 1e-7
 
     Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
     Eo = Eo.view(B, P, M, D, ht*wd)#6,3,5,6,30*101

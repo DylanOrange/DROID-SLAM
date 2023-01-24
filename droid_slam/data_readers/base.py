@@ -275,9 +275,8 @@ class RGBDDataset(data.Dataset):
         quanmask = self.construct_objectmask(TRACKID, quanmask)
 
         fullmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
-        # sampledmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
 
-        cropmasks = crop(fullmasks[..., None], corner, rec).squeeze(-1)#7,5,99,217
+        # cropmasks = crop(fullmasks[..., None], corner, rec).squeeze(-1)#7,5,99,217
         
         B = len(TRACKID)
         objectmasks = fullmasks.view(B*N, -1, self.h1//self.cropscale, self.w1//self.cropscale)#35,1,120,404
@@ -287,15 +286,15 @@ class RGBDDataset(data.Dataset):
         sampleddepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1, self.w1))#5,375,1242 ->5,240,808
         disps = 1.0/sampleddepths.squeeze(1)
 
-        cropdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.cropscale, self.w1//self.cropscale))#5,1,375,1242 ->5,1,120,404
-        fulldepths = 1.0/cropdepths.squeeze(1)
+        # cropdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.cropscale, self.w1//self.cropscale))#5,1,375,1242 ->5,1,120,404
+        # fulldepths = 1.0/cropdepths.squeeze(1)
 
-        cropdepths = cropdepths.transpose(0,1).expand(B,-1,-1,-1)
-        cropdepths = crop(cropdepths[..., None], corner, rec, depth =True)#7,5,99,217
-        cropdisps = 1.0/cropdepths.squeeze(-1)
+        # cropdepths = cropdepths.transpose(0,1).expand(B,-1,-1,-1)
+        # cropdepths = crop(cropdepths[..., None], corner, rec, depth =True)#7,5,99,217
+        # cropdisps = 1.0/cropdepths.squeeze(-1)
 
-        if torch.isin(12, TRACKID) and 1.0/torch.mean(cropdisps[cropmasks>0.0]) > 20.0:
-            cropdisps[:] = -0.1
+        # if torch.isin(12, TRACKID) and 1.0/torch.mean(cropdisps[cropmasks>0.0]) > 20.0:
+        #     cropdisps[:] = -0.1
             
         batchgrid = batch_grid(corner, rec)
         
@@ -315,7 +314,7 @@ class RGBDDataset(data.Dataset):
         #     disps = disps / s
         #     poses[...,:3] *= s
 
-        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), cropmasks.to('cuda'), cropdisps.to('cuda'), fullmasks.to('cuda'), fulldepths.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo
+        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo
 
     def __len__(self):
         return len(self.dataset_index)
