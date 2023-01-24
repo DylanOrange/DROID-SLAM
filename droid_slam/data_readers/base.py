@@ -4,6 +4,9 @@ import torch
 import torch.utils.data as data
 import torch.nn.functional as F
 
+import sys
+sys.path.append("..")
+
 import csv
 import os
 import cv2
@@ -16,6 +19,8 @@ import os.path as osp
 from .augmentation import RGBDAugmentor
 from .rgbd_utils import *
 from torch_scatter import scatter_sum
+from geom.projective_ops import coords_grid, crop, batch_grid
+
 NCAR = 135
 
 class RGBDDataset(data.Dataset):
@@ -28,6 +33,11 @@ class RGBDDataset(data.Dataset):
         self.n_frames = n_frames
         self.fmin = fmin # exclude very easy examples
         self.fmax = fmax # exclude very hard examples
+
+        self.h1 = 240
+        self.w1 = 808
+        self.scale = 8
+        self.cropscale = 2
         
         if do_aug:
             self.aug = RGBDAugmentor(crop_size=crop_size)
@@ -95,7 +105,7 @@ class RGBDDataset(data.Dataset):
                 frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1,torch.amax(fre)-2])))[0]
                 TRACKID = torch.from_numpy(np.intersect1d(frerank, arearank[-frerank.shape[0]:]))
         TRACKID = TRACKID[TRACKID!=0]-1
-        # TRACKID = torch.tensor([TRACKID[0]])
+        TRACKID = torch.tensor([TRACKID[0]])
         
         bins = torch.concat(count)
         Apperance = []
@@ -106,18 +116,31 @@ class RGBDDataset(data.Dataset):
             N_app += len(frames)
             Apperance.append(frames)
 
-        # print('trackid is {}'.format(TRACKID))
-        # print('appear is {}'.format(Apperance))
-        # print('frames are {}'.format(inds))
         return TRACKID, N_app, Apperance
 
     @staticmethod
-    def construct_objectmask(TRACKID, mask):
-        single_masklist = []
+    def cornerinfo(objectmask, TRACKID):
+        rec = torch.tensor([0,0])
+        corners = []
         for id in TRACKID:
-            single_mask = torch.where(mask == (id+1), 1.0, 0.0)
+            mask = torch.where(objectmask == (id+1), 1.0, 0.0)
+            coords = torch.nonzero(mask)
+            corner_min = torch.min(coords, dim = 0).values[1:]
+            corner_max = torch.max(coords, dim = 0).values[1:]
+            rec = torch.maximum(corner_max - corner_min, rec)
+            corners.append(corner_min)
+        corners = torch.stack(corners, dim = 0)
+        return corners, rec
+
+    @staticmethod
+    def construct_objectmask(TRACKID, mask):
+        single_masklist, cropmask_list = [], []
+        for id in TRACKID:
+            # single_mask = torch.where(mask == (id+1), 1.0, 0.0)
+            # single_cropmask = torch.where(cropmask == (id+1), 1.0, 0.0)
             # sampled_mask = torch.nn.functional.interpolate(single_mask.unsqueeze(1), size = (30,101), mode = 'bicubic').int()
-            single_masklist.append(single_mask)
+            single_masklist.append(torch.where(mask == (id+1), 1.0, 0.0).double())
+            # cropmask_list.append(torch.where(cropmask == (id+1), 1.0, 0.0))
         return torch.stack(single_masklist, dim = 0)
 
     def build_frame_graph(self, poses, depths, intrinsics, f=16, max_flow=256):
@@ -200,38 +223,38 @@ class RGBDDataset(data.Dataset):
         #     inds.append(ix + 5*i)
 
         #读取mask并确定要追踪的车的id
-        images, depths, poses, intrinsics, objectmasks, sampledmask = [], [], [], [], [], []
+        images, depths, poses, intrinsics, objectmasks, sampledmasks = [], [], [], [], [], []
         for i in inds:
             images.append(self.__class__.image_read(images_list[i]))
             depths.append(self.__class__.depth_read(depths_list[i]))
-            objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[0])
-            sampledmask.append(self.__class__.objectmask_read(objectmasks_list[i])[1])
             poses.append(poses_list[i])
             intrinsics.append(intrinsics_list[i])
+            objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i]))
 
         images = np.stack(images)
         objectmasks = np.stack(objectmasks)
-        sampledmask = np.stack(sampledmask)
         depths = np.stack(depths)
         poses = np.stack(poses)
         intrinsics = np.stack(intrinsics)
 
         images = torch.from_numpy(images)
-        # images = images.permute(0, 3, 1, 2)
+        N, h0, w0 = images.shape[:3]
 
-        disps = torch.from_numpy(1.0 / depths)
+        depths = torch.from_numpy(depths)
         poses = torch.from_numpy(poses)
         objectmasks = torch.from_numpy(objectmasks).int()
-        sampledmask = torch.from_numpy(sampledmask).int()
         intrinsics = torch.from_numpy(intrinsics)
-        intrinsics[:, 0:2] *= (101/ 1242)
-        intrinsics[:, 2:4] *= (30/ 375)
+        intrinsics[:, 0:2] *= ((self.w1//self.scale)/ w0)
+        intrinsics[:, 2:4] *= ((self.h1//self.scale)/ h0)
 
         # if self.aug is not None:
         #     images, objectmasks, poses, disps, intrinsics = \
         #             self.aug(images, objectmasks, poses, disps, intrinsics)
 
-        TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)
+        TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)#
+
+        objectmasks = torch.nn.functional.interpolate(objectmasks[:, None].double(), size = (self.h1//self.cropscale, self.w1//self.cropscale)).int().squeeze(1)#5,375,1242 ->5,120,404
+        corner, rec = self.cornerinfo(objectmasks, TRACKID)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].clone()
@@ -239,16 +262,38 @@ class RGBDDataset(data.Dataset):
         #     cv2.imwrite('./visualize/mask'+str(idx)+'.png', np.array(vis_image))
 
         images = images.permute(0, 3, 1, 2)
-        images = torch.nn.functional.interpolate(images, size = (240,808))
+        images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1))
 
         objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)
-        objectmasks = self.construct_objectmask(TRACKID, sampledmask)
 
+        fullmasks = self.construct_objectmask(TRACKID, objectmasks)#7,5,120,404
+        cropmasks = crop(fullmasks[..., None], corner, rec).squeeze(-1)#7,5,99,217
+        
+        B = len(TRACKID)
+        objectmasks = fullmasks.view(B*N, -1, self.h1//self.cropscale, self.w1//self.cropscale)#35,1,120,404
+        objectmasks = torch.nn.functional.interpolate(objectmasks, size = (self.h1//self.scale, self.w1//self.scale))#35,1,120,404 ->35,1,30,101
+        objectmasks = objectmasks.view(B, N, self.h1//self.scale, self.w1//self.scale)#7,5,30,101
+
+        sampleddepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.scale, self.w1//self.scale))#5,375,1242 ->5,30,101
+        disps = 1.0/sampleddepths.squeeze(1)
+
+        cropdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.cropscale, self.w1//self.cropscale))#5,1,375,1242 ->5,1,120,404
+        fulldepths = 1.0/cropdepths.squeeze(1)
+
+        cropdepths = cropdepths.transpose(0,1).expand(B,-1,-1,-1)
+        cropdepths = crop(cropdepths[..., None], corner, rec, depth =True)#7,5,99,217
+        cropdisps = 1.0/cropdepths.squeeze(-1)
+
+        batchgrid = batch_grid(corner, rec)
+        
         trackinfo = {
             'trackid': TRACKID.to('cuda'),
             'apperance': [x.to('cuda') for x in Apperance],
             'n_app': N_app,
             'frames': inds,
+            'corner': corner.to('cuda'),
+            'rec': rec.to('cuda'),
+            'grid': tuple(t.to('cuda') for t in batchgrid)
         }
 
         # scale scene
@@ -257,7 +302,7 @@ class RGBDDataset(data.Dataset):
         #     disps = disps / s
         #     poses[...,:3] *= s
 
-        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), intrinsics.to('cuda'), trackinfo
+        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), cropmasks.to('cuda'), cropdisps.to('cuda'), fullmasks.to('cuda'), fulldepths.to('cuda'), intrinsics.to('cuda'), trackinfo
 
     def __len__(self):
         return len(self.dataset_index)

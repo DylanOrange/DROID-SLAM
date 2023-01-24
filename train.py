@@ -1,3 +1,4 @@
+from email.policy import strict
 from pickle import FALSE, TRUE
 import sys
 sys.path.append('droid_slam')
@@ -55,7 +56,7 @@ def load_weights(model, weights):
     state_dict["module.update.delta.2.weight"] = state_dict["module.update.delta.2.weight"][:2]
     state_dict["module.update.delta.2.bias"] = state_dict["module.update.delta.2.bias"][:2]
 
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict = False)
     return model
 
 def train(gpu, args):
@@ -92,16 +93,11 @@ def train(gpu, args):
     should_keep_training = True
     total_steps = 0
 
-    # geo_sum = 0.0
-    # geo_ob_sum = 0.0
-    # flow_sum = 0.0
-    # res_sum = 0.0
-
     while should_keep_training:
         for i_batch, item in enumerate(train_loader):
             optimizer.zero_grad()
 
-            images, poses, objectposes, objectmasks,disps, intrinsics, trackinfo = item
+            images, poses, objectposes, objectmasks, disps, cropmasks, cropdisps, fullmasks, fulldisps, intrinsics, trackinfo = item
 
             # convert poses w2c -> c2w
             Ps = SE3(poses)#这里暂时使用w2c
@@ -134,7 +130,7 @@ def train(gpu, args):
                 r = rng.random()
                 
                 # intrinsics0 = intrinsics / 8.0
-                poses_est, objectposes_est, disps_est, residuals = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps, intrinsics, trackinfo,
+                poses_est, objectposes_est, disps_est, residuals, flow_metrics = model(Ps, Ps, ObjectGs, ObjectPs, images, objectmasks, disps, disps, cropmasks, cropdisps,  fullmasks, fulldisps, intrinsics, trackinfo,
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
@@ -161,28 +157,13 @@ def train(gpu, args):
                 'res_loss':res_loss.item(),
             }
             metrics.update(loss)
-
-            # geo_sum += geo_loss
-            # geo_ob_sum += Obgeo_loss
-            # flow_sum += flo_loss
-            # res_sum += res_loss
+            metrics.update(flow_metrics)
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
             scheduler.step()
             
             total_steps += 1
-
-            # if total_steps %20 == 0:
-            #     print('geo loss {}'.format(geo_sum/20.0))
-            #     print('ob geo loss {}'.format(geo_ob_sum/20.0))
-            #     print('flow loss {}'.format(flow_sum/20.0))
-            #     print('res loss {}'.format(res_sum/20.0))
-
-            #     geo_sum = 0.0
-            #     geo_ob_sum = 0.0
-            #     flow_sum = 0.0
-            #     res_sum = 0.0
 
             if gpu == 0:
                 logger.push(metrics)
@@ -208,9 +189,9 @@ if __name__ == '__main__':
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=8)
+    parser.add_argument('--iters', type=int, default=6)
     parser.add_argument('--steps', type=int, default=80000)
-    parser.add_argument('--lr', type=float, default=0.0005)
+    parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=5)
 
