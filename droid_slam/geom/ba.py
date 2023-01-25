@@ -50,6 +50,7 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     wJjT = (w * Jj).transpose(2,3)
 
     Jz = Jz.reshape(B, N, ht*wd, -1)
+    Jz = torch.zeros_like(Jz)
 
     Hii = torch.matmul(wJiT, Ji)
     Hij = torch.matmul(wJiT, Jj)
@@ -177,10 +178,10 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    # Jci = torch.zeros_like(Jci)
-    # Jcj = torch.zeros_like(Jcj)
     Joi = Joi.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
     Joj = Joj.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
+    Joi = torch.zeros_like(Joi)
+    Joj = torch.zeros_like(Joj)
 
     i = torch.arange(N).to('cuda')
     ii_test = i*P + ii
@@ -228,7 +229,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     H_test = H_test.view(B, U, D, U, D).transpose(2,3)
 
     Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
-    # Jz = torch.zeros_like(Jz)
+    Jz = torch.zeros_like(Jz)
 
     Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
     Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030

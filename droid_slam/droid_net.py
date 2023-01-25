@@ -244,13 +244,16 @@ class DroidNet(nn.Module):
         validmask = torch.stack(validmasklist, dim=0)
 
         #NOTE: 先用低分辨率试一试
-        coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+        # coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+        coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+
         target = coords1.clone()
 
         # highintrinsics = intrinsics.clone()
         # highintrinsics[...,:] *= 4
 
-        lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        lowgtflow, lowmask = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
+        # lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
         # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
 
         Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, dyna_residual_list = [], [], [], [], [], []
@@ -297,28 +300,32 @@ class DroidNet(nn.Module):
             # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
             # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
 
-            for i in range(5):
-                Gs, ObjectGs, disps = dynamicBA(lowgtflow, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+            weight = lowmask.expand(-1,-1,-1,-1,2)
+            eta = torch.zeros_like(eta)
+            for i in range(4):
+                Gs, disps = BA(lowgtflow, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                # Gs, ObjectGs, disps = dynamicBA(lowgtflow, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
-            coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            # coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
             # coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
         
             # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
             static_residual = (target - coords1)*valid_static
             dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
             
-            loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-            ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
-            print('-----------------')
-            print('frames are {}'.format(trackinfo['frames']))
-            print('trackid is {}'.format(trackinfo['trackid'].item()))
-            print('loss is {}'.format(loss.item()))
-            print('r_err is {}'.format(r_err.item()))
-            print('t_err is {}'.format(t_err.item()))
+            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+            # print('-----------------')
+            # print('frames are {}'.format(trackinfo['frames']))
+            # print('trackid is {}'.format(trackinfo['trackid'].item()))
+            # print('loss is {}'.format(loss.item()))
+            # print('r_err is {}'.format(r_err.item()))
+            # print('t_err is {}'.format(t_err.item()))
 
-            print('ob_loss is {}'.format(ob_loss.item()))
-            print('ob_r_err is {}'.format(ob_r_err.item()))
-            print('ob_t_err is {}'.format(ob_t_err.item()))
+            # print('ob_loss is {}'.format(ob_loss.item()))
+            # print('ob_r_err is {}'.format(ob_r_err.item()))
+            # print('ob_t_err is {}'.format(ob_t_err.item()))
 
             # if ob_loss > 2.0:
             #     print('{} has too large loss!'.format(trackinfo['trackid'].item()))

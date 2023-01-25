@@ -202,8 +202,11 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     highintrinsics = intrinsics.clone()
     highintrinsics[...,:] *= 8
 
-    lowgtflow, lowmask = dyprojective_transform(Ps, lowdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks[0])
-    highgtflow, highmask = dyprojective_transform(Ps, disps, highintrinsics, ii, jj, validmask, ObjectPs, quanmask[0])
+    lowgtflow, lowmask = projective_transform(Ps, lowdisps, intrinsics, ii, jj)
+    highgtflow, highmask = projective_transform(Ps, disps, highintrinsics, ii, jj)
+
+    # lowgtflow, lowmask = dyprojective_transform(Ps, lowdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks[0])
+    # highgtflow, highmask = dyprojective_transform(Ps, disps, highintrinsics, ii, jj, validmask, ObjectPs, quanmask[0])
 
     lowmask = lowmask * (lowdisps[:,ii] > 0).float().unsqueeze(dim=-1)
     highmask = highmask * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
@@ -211,22 +214,27 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     n = len(poses_est)
     error_low = 0
     error_dyna = 0
+    error_high = 0
 
     for i in range(n):
         w = gamma ** (n - i - 1)
 
+        #看预测的流准不准
         i_error_low = (lowgtflow - flow_low_list[i]).abs()
         error_low += w*(lowmask*i_error_low).mean()
 
-        coords_resi, dynamask1 = dyprojective_transform(poses_est[i], disps_est[i], highintrinsics, ii, jj, validmask, objectposes_est[i], quanmask[0])
+        #看预测的深度和Pose准不准
+        coords_resi, highmask1 = projective_transform(poses_est[i], disps_est[i], highintrinsics, ii, jj)
+        # coords_resi, highmask1 = dyprojective_transform(poses_est[i], disps_est[i], highintrinsics, ii, jj, validmask, objectposes_est[i], quanmask[0])
 
-        # dymask = objectmasks[0,:,ii, ..., None]*lowmask
-        # epe_dyna = i_error_low[dymask[..., 0]>0.5]
-        # error_dyna += w * epe_dyna.mean()
-
-        v = (dynamask1 * highmask).squeeze(dim=-1)
-        epe_dyna = v * (highgtflow - coords_resi).norm(dim=-1)
+        #动态区域流
+        dymask = objectmasks[0,:,ii]
+        epe_dyna = i_error_low[dymask>0.5]
         error_dyna += w * epe_dyna.mean()
+
+        v = (highmask1 * highmask).squeeze(dim=-1)
+        epe_high = v * (highgtflow - coords_resi).norm(dim=-1)
+        error_high += w * epe_high.mean()
 
     epe_low = (flow_low_list[-1] - lowgtflow).norm(dim=-1)
     epe_low = epe_low.reshape(-1)[lowmask.reshape(-1) > 0.5]
@@ -237,6 +245,11 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
 
         'dyna_f_error': epe_dyna.mean().item(),
         'dyna_1px': (epe_dyna<1.0).float().mean().item(),
+
+        'high_f_error': epe_high.mean().item(),
+        'high_1px': (epe_high<1.0).float().mean().item(),
+
+        'error_dyna': error_dyna.item(),
     }
 
-    return error_low, error_dyna, metrics
+    return error_low, error_high, metrics
