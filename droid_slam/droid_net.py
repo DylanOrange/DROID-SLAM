@@ -246,17 +246,22 @@ class DroidNet(nn.Module):
         #NOTE: 先用低分辨率试一试
         # coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
         coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+        # diff = coords1 - coords1_ob
+        # mask = objectmasks[:,ii]
+        # print(torch.count_nonzero(diff))
+        # print(2*torch.count_nonzero(mask))
 
         target = coords1.clone()
+        # target_st = coords1_st.clone()
 
         # highintrinsics = intrinsics.clone()
         # highintrinsics[...,:] *= 4
-
-        lowgtflow, lowmask = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
-        # lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        # objectmasks = torch.zeros_like(objectmasks)
+        lowgtflow_st, lowmask_st = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
+        lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
         # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
 
-        Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, dyna_residual_list = [], [], [], [], [], []
+        Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, dyna_residual_list, low_disp_list = [], [], [], [], [], [],[]
 
         for step in range(num_steps):
             Gs = Gs.detach()
@@ -265,18 +270,42 @@ class DroidNet(nn.Module):
             coords1 = coords1.detach()
             target = target.detach()
 
+            # coords1_st = coords1_st.detach()
+            # target_st = target_st.detach()
+
             # extract motion features
             corr = corr_fn(coords1.float())
+            # corr_st = corr_fn(coords1_st.float())
             resd = target - coords1
             flow = coords1 - coords0
+            # flow_st = coords1_st - coords0
 
             motion = torch.cat([flow, resd], dim=-1)
             motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0).float()
 
+            # motion_st = torch.cat([flow_st, resd], dim=-1)
+            # motion_st = motion_st.permute(0,1,4,2,3).clamp(-64.0, 64.0).float()
+            # mask = objectmasks[: ,ii,..., None]
+            # cormask = objectmasks[: ,ii, None]
+
             net, delta, weight, eta, mask_disp = \
                 self.update(net, inp, corr, motion, ii, jj)
 
+            # net_st, delta_st, weight_st, eta_st, mask_disp_st = \
+            #     self.update(net, inp, corr_st, motion_st, ii, jj)
+
+            # diff_flow = (flow - flow_st)*(1-mask)
+            # diff_corr = (corr - corr_st)*(1-cormask)
+            # diff_delta = (delta - delta_st)*(1-mask)
+            # diff_weight = (weight - weight_st)*(1-mask)
+
+            # print('static diff is {}'.format(torch.count_nonzero(diff_delta)))
+            # print('static weight is {}'.format(torch.count_nonzero(diff_weight)))
+            # print('static corr is {}'.format(torch.count_nonzero(diff_corr)))
+            # print('static flow is {}'.format(torch.count_nonzero(diff_flow)))
             target = coords1 + delta
+
+            # target_st = coords1_st + delta_st
 
             # flow_inter = upsample_flow(target - coords0, mask_flow, 4) + coords_crop
             # cropweight = upsample_flow(weight, mask_weight,4)
@@ -295,24 +324,28 @@ class DroidNet(nn.Module):
             # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
             # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
 
-            # lowmask = lowmask.expand(-1,-1,-1,-1,2)
+            weight_st = lowmask_st.expand(-1,-1,-1,-1,2)
+            weight = lowmask.expand(-1,-1,-1,-1,2)
 
             # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
             # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
 
-            weight = lowmask.expand(-1,-1,-1,-1,2)
-            eta = torch.zeros_like(eta)
-            for i in range(4):
-                Gs, disps = BA(lowgtflow, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
-                # Gs, ObjectGs, disps = dynamicBA(lowgtflow, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+            disps_st = disps.clone()
+            for i in range(10):
+                Ps, disps_st, co_st, dz_st = BA(lowgtflow_st, weight_st, None, Ps, disps_st, intrinsics, ii, jj, fixedp=2)
+                Ps, ObjectGs, disps, co, dz = dynamicBA(lowgtflow, weight, ObjectGs, objectmasks, trackinfo, validmask, None, Ps, disps, intrinsics, ii, jj, fixedp=2)
 
-            # coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
-            coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+            depth_vis(gtdisps,'gt')
+            depth_vis(disps_st,'st')
+            depth_vis(disps,'dy')
+
+            coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            # coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
             # coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
         
             # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
             static_residual = (target - coords1)*valid_static
-            dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
+            # dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
             
             # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
             # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
@@ -338,11 +371,12 @@ class DroidNet(nn.Module):
             Gs_list.append(Gs)
             ObjectGs_list.append(ObjectGs)
             disp_list.append(upsample_flow(disps[..., None], mask_disp, 8, True)[...,0])
+            low_disp_list.append(disps)
             static_residual_list.append(static_residual)
-            dyna_residual_list.append(dyna_residual[dyna_residual>0])
+            # dyna_residual_list.append(dyna_residual[dyna_residual>0])
             flow_low_list.append(target)
 
-        return Gs_list, ObjectGs_list, disp_list, static_residual_list, dyna_residual_list, flow_low_list
+        return Gs_list, ObjectGs_list, disp_list, static_residual_list, flow_low_list, low_disp_list
 
 def add_neighborhood_factors(t0, t1, r=2):
     """ add edges between neighboring frames within radius r """
@@ -424,3 +458,9 @@ def geoloss(objectposes, object_est, ii, jj):
     t_err = t_err.mean()
 
     return geodesic_loss, r_err, t_err
+
+def depth_vis(disps, mode):
+    depth = 100*((1.0/disps).clamp(max=655.35).cpu().detach().numpy())
+
+    for i in range(5):
+        cv2.imwrite('./result/veri/depth' + mode +'_{}.png'.format(i),depth[0,i].astype(np.uint16))

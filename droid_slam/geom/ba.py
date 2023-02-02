@@ -40,17 +40,23 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     coords, valid, (Ji, Jj, Jz) = pops.projective_transform(
         poses, disps, intrinsics, ii, jj, jacobian=True)
 
+    r = (target - coords)*valid*weight
+    # residual = r[r!=0.0]
+    print('residual is {}'.format(torch.mean((torch.abs(r)))))
+
     r = (target - coords).view(B, N, -1, 1)
     w = .001 * (valid * weight).view(B, N, -1, 1)
 
     ### 2: construct linear system ###
     Ji = Ji.reshape(B, N, -1, D)
     Jj = Jj.reshape(B, N, -1, D)
+    Ji = torch.zeros_like(Ji)
+    Jj = torch.zeros_like(Jj)
     wJiT = (w * Ji).transpose(2,3)
     wJjT = (w * Jj).transpose(2,3)
 
     Jz = Jz.reshape(B, N, ht*wd, -1)
-    Jz = torch.zeros_like(Jz)
+    # Jz = torch.zeros_like(Jz)
 
     Hii = torch.matmul(wJiT, Ji)
     Hij = torch.matmul(wJiT, Jj)
@@ -90,7 +96,8 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     C = safe_scatter_add_vec(Ck, kk, M)
     w = safe_scatter_add_vec(wk, kk, M)
 
-    C = C + eta.view(*C.shape) + 1e-7
+    # C = C + eta.view(*C.shape) + 1e-7
+    C = C + 1e-7
 
     H = H.view(B, P, P, D, D)
     E = E.view(B, P, M, D, ht*wd)
@@ -105,7 +112,7 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
     disps = disps.clamp(min=0.0)
 
-    return poses, disps
+    return poses, disps, coords, dz
 
 
 def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
@@ -166,12 +173,42 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     batch_grid = trackinfo['grid']
 
     ### 1: compute jacobians and residuals ###
+    # coords, valid, (Ji_st, Jj_st, Jz_st) = pops.projective_transform(
+    #     poses, disps, intrinsics, ii, jj, jacobian=True)
+
     coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = TRUE, batch = False, batch_grid = None)
 
-    # r = (target - coords)*valid*weight
+    # diff = coords - coords_st
+    # diff_ji = Ji_st - Jci
+    # diff_jj = Jj_st - Jcj
+    # diff_jz = Jz_st - Jz
+    # mask = objectmask[:,ii]
+    # # masknumber = torch.count_nonzero(mask)
+
+    # assert torch.count_nonzero(diff*(1-mask[...,None])) == 0
+    # assert torch.count_nonzero(diff_ji*(1-mask[...,None, None])) == 0
+    # assert torch.count_nonzero(diff_jj*(1-mask[...,None, None])) == 0
+    # assert torch.count_nonzero(diff_jz*(1-mask[...,None, None])) == 0
+    # # print('coords is correct {}'.format(torch.count_nonzero(diff*(1-mask[...,None]))))
+    # # print('object mask have {} pixels!'.format(masknumber))
+    # # # print('coords is correct! {}'.format(torch.count_nonzero(diff) == 2*torch.count_nonzero(mask)))
+
+    # # diff_ji = Ji_st - Jci
+    # # diff_jj = Jj_st - Jcj
+    # # diff_jz = Jz_st - Jz
+    # # print('JI is correct {}'.format(torch.count_nonzero(diff_ji*(1-mask[...,None, None]))))
+    # # print('Jj is correct {}'.format(torch.count_nonzero(diff_jj*(1-mask[...,None, None]))))
+    # # print('Jz is correct {}'.format(torch.count_nonzero(diff_jz*(1-mask[...,None, None]))))
+    # # diff_proj = X1_st - X1
+    # print('Ji is correct! {}'.format(torch.count_nonzero(diff_ji) == 12*torch.count_nonzero(mask)))
+    # print('Jj is correct! {}'.format(torch.count_nonzero(diff_jj) == 10*torch.count_nonzero(mask)))
+    # print('Jz is correct! {}'.format(torch.count_nonzero(diff_jz) == 2*torch.count_nonzero(mask)))
+    # print('proj point is correct! {}'.format(torch.count_nonzero(diff_proj) == 3*torch.count_nonzero(mask)))
+
+    r = (target - coords)*valid*weight
     # residual = r[r!=0.0]
-    # print('residual is {}'.format(torch.mean((torch.abs(residual)))))
+    print('residual is {}'.format(torch.mean((torch.abs(r)))))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
     w = .001*(valid*weight).view(B,N,-1,1)
@@ -180,6 +217,8 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Joi = Joi.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
     Joj = Joj.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
+    Jci = torch.zeros_like(Jci)
+    Jcj = torch.zeros_like(Jcj)
     Joi = torch.zeros_like(Joi)
     Joj = torch.zeros_like(Joj)
 
@@ -229,7 +268,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     H_test = H_test.view(B, U, D, U, D).transpose(2,3)
 
     Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
-    Jz = torch.zeros_like(Jz)
+    # Jz = torch.zeros_like(Jz)
 
     Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
     Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
@@ -258,8 +297,8 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     C = safe_scatter_add_vec(Ck, kk, M)#1,5,3030
     w = safe_scatter_add_vec(wk, kk, M)#1,5,3030 
 
-    # C = C + 1e-7
-    C = C + eta.view(*C.shape) + 1e-7
+    C = C + 1e-7
+    # C = C + eta.view(*C.shape) + 1e-7
 
     Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
     Eo = Eo.view(B, P, M, D, ht*wd)#6,3,5,6,30*101
@@ -290,7 +329,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
     disps = disps.clamp(min=0.0)
     
-    return poses, objectposes, disps
+    return poses, objectposes, disps, coords, dz
 
 def cameraBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 

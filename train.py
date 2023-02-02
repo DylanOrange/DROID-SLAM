@@ -123,8 +123,8 @@ def train(args):
             for n in range(len(trackinfo['trackid'][0])):
                 ObjectGs.data[n, trackinfo['apperance'][n][0][0]] = ObjectPs.data[n, trackinfo['apperance'][n][0][0]].clone()
                 ObjectGs.data[n, trackinfo['apperance'][n][0][1:]] = ObjectPs.data[n, trackinfo['apperance'][n][0][1]].clone()
-            # disp0 = torch.ones_like(disps[:,:,3::8,3::8])
-            disp0 = disps[:,:,3::8,3::8]
+            disp0 = torch.ones_like(disps[:,:,3::8,3::8])
+            # disp0 = disps[:,:,3::8,3::8]
             # perform random restarts
 
             r = 0
@@ -132,16 +132,16 @@ def train(args):
                 r = rng.random()
                 
                 # intrinsics0 = intrinsics / 8.0
-                poses_est, objectposes_est, disps_est,  static_residual_list, dyna_residual_list, flow_low_list = model(Gs, Ps, ObjectPs, ObjectPs, images, objectmasks, disp0, disps[:,:,3::8,3::8], intrinsics, trackinfo,
+                poses_est, objectposes_est, disps_est,  static_residual_list, flow_low_list, low_disp_list = model(Gs, Ps, ObjectPs, ObjectPs, images, objectmasks, disp0, disps[:,:,3::8,3::8], intrinsics, trackinfo,
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
                 static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
-                dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list)
-                error_low, error_high, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list)
+                # dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list)
+                error_high, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list)
 
-                loss =  args.w1*geo_loss + args.w1 * Obgeo_loss + args.w2 * static_resi_loss + args.w2 * dyna_resi_loss + args.w3 * error_low + args.w3 * error_high
+                loss =  args.w1*geo_loss  + args.w2 * static_resi_loss  + args.w3 * error_high 
                 loss.backward()
 
                 Gs = poses_est[-1].detach()
@@ -152,15 +152,15 @@ def train(args):
             metrics.update(geo_metrics)
             metrics.update(Obgeo_metrics)
             metrics.update(static_resid_metrics)
-            metrics.update(dyna_resid_metrics)
+            # metrics.update(dyna_resid_metrics)
             metrics.update(flow_metrics)
             loss = {
                 'geo_loss':geo_loss.item(),
                 'Obgeo_loss':Obgeo_loss.item(),
-                'error_low':error_low.item(),
+                # 'error_low':error_low.item(),
                 'error_high':error_high.item(), 
                 'static_resi_loss':static_resi_loss.item(),
-                'dyna_resi_loss':dyna_resi_loss.item(),
+                # 'dyna_resi_loss':dyna_resi_loss.item(),
             }
             metrics.update(loss)
 
@@ -187,22 +187,22 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='30*101_1_4_compa_sepa_gtdepth', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore',default='droid.pth')
+    parser.add_argument('--name', default='test', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore',default='./checkpoints/30*101_15_2_droid_wock_044000.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2/Scene20', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=1)
-    parser.add_argument('--steps', type=int, default=80000)
+    parser.add_argument('--steps', type=int, default=250000)
     parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=5)
 
     parser.add_argument('--w1', type=float, default=10.0)
     parser.add_argument('--w2', type=float, default=0.01)
-    parser.add_argument('--w3', type=float, default=1)
+    parser.add_argument('--w3', type=float, default=0.05)
 
     parser.add_argument('--fmin', type=float, default=8.0)
     parser.add_argument('--fmax', type=float, default=80.0)
