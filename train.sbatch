@@ -9,5 +9,5 @@
 #SBATCH --no-requeue
 #SBATCH --output=/storage/slurm/logs/slurm-%j.out
 #SBATCH --error=/storage/slurm/logs/slurm-%j.out
-git checkout 30*101_object
+git checkout 30-101_object
 srun python train.py
