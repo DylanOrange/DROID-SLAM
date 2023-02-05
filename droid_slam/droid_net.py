@@ -244,21 +244,16 @@ class DroidNet(nn.Module):
         validmask = torch.stack(validmasklist, dim=0)
 
         #NOTE: 先用低分辨率试一试
-        # coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
-        coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
-        # diff = coords1 - coords1_ob
-        # mask = objectmasks[:,ii]
-        # print(torch.count_nonzero(diff))
-        # print(2*torch.count_nonzero(mask))
+        coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+        # coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
 
         target = coords1.clone()
-        # target_st = coords1_st.clone()
 
         # highintrinsics = intrinsics.clone()
         # highintrinsics[...,:] *= 4
         # objectmasks = torch.zeros_like(objectmasks)
-        lowgtflow_st, lowmask_st = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
-        lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        # lowgtflow_st, lowmask_st = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
+        # lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
         # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
 
         Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, dyna_residual_list, low_disp_list = [], [], [], [], [], [],[]
@@ -270,42 +265,18 @@ class DroidNet(nn.Module):
             coords1 = coords1.detach()
             target = target.detach()
 
-            # coords1_st = coords1_st.detach()
-            # target_st = target_st.detach()
-
             # extract motion features
             corr = corr_fn(coords1.float())
-            # corr_st = corr_fn(coords1_st.float())
             resd = target - coords1
             flow = coords1 - coords0
-            # flow_st = coords1_st - coords0
 
             motion = torch.cat([flow, resd], dim=-1)
             motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0).float()
 
-            # motion_st = torch.cat([flow_st, resd], dim=-1)
-            # motion_st = motion_st.permute(0,1,4,2,3).clamp(-64.0, 64.0).float()
-            # mask = objectmasks[: ,ii,..., None]
-            # cormask = objectmasks[: ,ii, None]
-
             net, delta, weight, eta, mask_disp = \
                 self.update(net, inp, corr, motion, ii, jj)
 
-            # net_st, delta_st, weight_st, eta_st, mask_disp_st = \
-            #     self.update(net, inp, corr_st, motion_st, ii, jj)
-
-            # diff_flow = (flow - flow_st)*(1-mask)
-            # diff_corr = (corr - corr_st)*(1-cormask)
-            # diff_delta = (delta - delta_st)*(1-mask)
-            # diff_weight = (weight - weight_st)*(1-mask)
-
-            # print('static diff is {}'.format(torch.count_nonzero(diff_delta)))
-            # print('static weight is {}'.format(torch.count_nonzero(diff_weight)))
-            # print('static corr is {}'.format(torch.count_nonzero(diff_corr)))
-            # print('static flow is {}'.format(torch.count_nonzero(diff_flow)))
             target = coords1 + delta
-
-            # target_st = coords1_st + delta_st
 
             # flow_inter = upsample_flow(target - coords0, mask_flow, 4) + coords_crop
             # cropweight = upsample_flow(weight, mask_weight,4)
@@ -324,20 +295,18 @@ class DroidNet(nn.Module):
             # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
             # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
 
-            weight_st = lowmask_st.expand(-1,-1,-1,-1,2)
-            weight = lowmask.expand(-1,-1,-1,-1,2)
+            # weight = lowmask.expand(-1,-1,-1,-1,2)
+            # weight = lowmask.expand(-1,-1,-1,-1,2)
 
             # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
             # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
 
-            disps_st = disps.clone()
-            for i in range(10):
-                Ps, disps_st, co_st, dz_st = BA(lowgtflow_st, weight_st, None, Ps, disps_st, intrinsics, ii, jj, fixedp=2)
-                Ps, ObjectGs, disps, co, dz = dynamicBA(lowgtflow, weight, ObjectGs, objectmasks, trackinfo, validmask, None, Ps, disps, intrinsics, ii, jj, fixedp=2)
+            for i in range(2):
+                # Gs, disps= BA(lowgtflow, weight, None, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
-            depth_vis(gtdisps,'gt')
-            depth_vis(disps_st,'st')
-            depth_vis(disps,'dy')
+            # depth_vis(gtdisps,'gt')
+            # depth_vis(disps,'dy')
 
             coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             # coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
@@ -463,4 +432,4 @@ def depth_vis(disps, mode):
     depth = 100*((1.0/disps).clamp(max=655.35).cpu().detach().numpy())
 
     for i in range(5):
-        cv2.imwrite('./result/veri/depth' + mode +'_{}.png'.format(i),depth[0,i].astype(np.uint16))
+        cv2.imwrite('./result/gtflow/depth' + mode +'_{}.png'.format(i),depth[0,i].astype(np.uint16))

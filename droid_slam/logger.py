@@ -15,7 +15,7 @@ class Logger:
 
     def _print_training_status(self):
         if self.writer is None:
-            self.writer = SummaryWriter('runs/depthvis/%s' % self.name)
+            self.writer = SummaryWriter('runs/depth/%s' % self.name)
             print([k for k in self.running_loss])
 
         lr = self.scheduler.get_lr().pop()
