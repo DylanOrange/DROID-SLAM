@@ -132,7 +132,7 @@ def train(args):
                 r = rng.random()
                 
                 # intrinsics0 = intrinsics / 8.0
-                poses_est, objectposes_est, disps_est,  static_residual_list, flow_low_list, low_disp_list = model(Gs, Ps, ObjectPs, ObjectPs, images, objectmasks, disp0, disps[:,:,3::8,3::8], intrinsics, trackinfo,
+                poses_est, objectposes_est, disps_est,  static_residual_list, flow_low_list, low_disp_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps[:,:,3::8,3::8], intrinsics, trackinfo,
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
@@ -187,7 +187,7 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='30*101_15_2_cameraflow', help='name your experiment')
+    parser.add_argument('--name', default='30*101_15_2_objectflow', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore',default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2/Scene20', help="path to dataset directory")

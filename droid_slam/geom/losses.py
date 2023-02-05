@@ -250,10 +250,10 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     prelowdepth = 100*prelowdepth.clamp(max=655.35).cpu().detach().numpy()
 
     for i in range(5):
-        cv2.imwrite('./result/cameraflow/gthighdepth_{}.png'.format(i),gthighdepth[0,i].astype(np.uint16))
-        cv2.imwrite('./result/cameraflow/gtlowdepth_{}.png'.format(i),gtlowdepth[0,i].astype(np.uint16))
-        cv2.imwrite('./result/cameraflow/prehighdepth_{}.png'.format(i),prehighdepth[0,i].astype(np.uint16))
-        cv2.imwrite('./result/cameraflow/prelowdepth_{}.png'.format(i),prelowdepth[0,i].astype(np.uint16))
+        cv2.imwrite('./result/objectflow/gthighdepth_{}.png'.format(i),gthighdepth[0,i].astype(np.uint16))
+        cv2.imwrite('./result/objectflow/gtlowdepth_{}.png'.format(i),gtlowdepth[0,i].astype(np.uint16))
+        cv2.imwrite('./result/objectflow/prehighdepth_{}.png'.format(i),prehighdepth[0,i].astype(np.uint16))
+        cv2.imwrite('./result/objectflow/prelowdepth_{}.png'.format(i),prelowdepth[0,i].astype(np.uint16))
 
     valid_high = (1.0/disps < 30.0)*(1.0/disps > 0.5)*(disps_est[-1] >0.0)
     valid_high[0,0] = False

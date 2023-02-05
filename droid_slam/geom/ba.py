@@ -192,8 +192,8 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     Joj = Joj.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
     # Jci = torch.zeros_like(Jci)
     # Jcj = torch.zeros_like(Jcj)
-    Joi = torch.zeros_like(Joi)
-    Joj = torch.zeros_like(Joj)
+    # Joi = torch.zeros_like(Joi)
+    # Joj = torch.zeros_like(Joj)
 
     i = torch.arange(N).to('cuda')
     ii_test = i*P + ii
