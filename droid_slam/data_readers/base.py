@@ -1,4 +1,5 @@
 
+import imghdr
 import numpy as np
 import torch
 import torch.utils.data as data
@@ -274,6 +275,11 @@ class RGBDDataset(data.Dataset):
         quanmask = torch.nn.functional.interpolate(objectmasks[:, None].float(), size = (self.h1, self.w1)).squeeze(1).int()
         quanmask = self.construct_objectmask(TRACKID, quanmask)
 
+        vis_image = images.permute(0,2,3,1).int()
+        vis_image[quanmask[0]>0] = torch.tensor([255,255,255], dtype = torch.int)
+        for i in range(5):
+            cv2.imwrite('./result/object/mask_{}.png'.format(i),vis_image[i].numpy())
+
         fullmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
 
         # cropmasks = crop(fullmasks[..., None], corner, rec).squeeze(-1)#7,5,99,217
@@ -309,10 +315,11 @@ class RGBDDataset(data.Dataset):
         }
 
         # scale scene
-        # if len(disps[disps>0.01]) > 0:
-        #     s = disps[disps>0.01].mean()
-        #     disps = disps / s
-        #     poses[...,:3] *= s
+        if len(disps[disps>0.01]) > 0:
+            s = disps[disps>0.01].mean()
+            disps = disps / s
+            poses[...,:3] *= s
+            objectposes[...,:3] *= s
 
         return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo
 

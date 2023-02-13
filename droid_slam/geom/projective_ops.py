@@ -236,7 +236,8 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
     x1, Jp1 = proj(X1, intrinsics[:, jj], jacobian=Jacobian, return_depth=return_depth)
 
     # exclude points too close to camera
-    valid = ((X1[..., 2] > MIN_DEPTH) & (X1[...,3] > 0.0) & (X0[..., 2] > MIN_DEPTH)).float()
+    # valid = ((X1[..., 2] > MIN_DEPTH) & (X1[...,3] > 0.0) & (X0[..., 2] > MIN_DEPTH)).float()
+    valid = ((X1[..., 2] > MIN_DEPTH) & (X0[..., 2] > MIN_DEPTH)).float()
     valid = valid.unsqueeze(-1)
 
     if Jacobian:

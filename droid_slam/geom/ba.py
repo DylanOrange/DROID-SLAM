@@ -40,16 +40,23 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     coords, valid, (Ji, Jj, Jz) = pops.projective_transform(
         poses, disps, intrinsics, ii, jj, jacobian=True)
 
+    # r = (target - coords)*valid*weight
+    # # residual = r[r!=0.0]
+    # print('residual is {}'.format(torch.mean((torch.abs(r)))))
+
     r = (target - coords).view(B, N, -1, 1)
     w = .001 * (valid * weight).view(B, N, -1, 1)
 
     ### 2: construct linear system ###
     Ji = Ji.reshape(B, N, -1, D)
     Jj = Jj.reshape(B, N, -1, D)
+    # Ji = torch.zeros_like(Ji)
+    # Jj = torch.zeros_like(Jj)
     wJiT = (w * Ji).transpose(2,3)
     wJjT = (w * Jj).transpose(2,3)
 
     Jz = Jz.reshape(B, N, ht*wd, -1)
+    # Jz = torch.zeros_like(Jz)
 
     Hii = torch.matmul(wJiT, Ji)
     Hij = torch.matmul(wJiT, Jj)
@@ -90,6 +97,7 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     w = safe_scatter_add_vec(wk, kk, M)
 
     C = C + eta.view(*C.shape) + 1e-7
+    # C = C + 1e-7
 
     H = H.view(B, P, P, D, D)
     E = E.view(B, P, M, D, ht*wd)
@@ -104,7 +112,7 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
     disps = disps.clamp(min=0.0)
 
-    return poses, disps
+    return poses, disps, valid
 
 
 def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
@@ -165,22 +173,27 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     batch_grid = trackinfo['grid']
 
     ### 1: compute jacobians and residuals ###
+    # coords, valid, (Ji_st, Jj_st, Jz_st) = pops.projective_transform(
+    #     poses, disps, intrinsics, ii, jj, jacobian=True)
+
     coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = TRUE, batch = False, batch_grid = None)
 
     # r = (target - coords)*valid*weight
-    # residual = r[r!=0.0]
-    # print('residual is {}'.format(torch.mean((torch.abs(residual)))))
+    # # residual = r[r!=0.0]
+    # print('residual is {}'.format(torch.mean((torch.abs(r)))))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
     w = .001*(valid*weight).view(B,N,-1,1)
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    # Jci = torch.zeros_like(Jci)
-    # Jcj = torch.zeros_like(Jcj)
     Joi = Joi.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
     Joj = Joj.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
+    # Jci = torch.zeros_like(Jci)
+    # Jcj = torch.zeros_like(Jcj)
+    # Joi = torch.zeros_like(Joi)
+    # Joj = torch.zeros_like(Joj)
 
     i = torch.arange(N).to('cuda')
     ii_test = i*P + ii
@@ -289,7 +302,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
     disps = disps.clamp(min=0.0)
     
-    return poses, objectposes, disps
+    return poses, objectposes, disps, valid
 
 def cameraBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 

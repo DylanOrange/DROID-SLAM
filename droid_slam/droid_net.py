@@ -3,6 +3,7 @@ import cv2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import droid_backends
 from collections import OrderedDict
 
 from modules.extractor import BasicEncoder
@@ -169,7 +170,6 @@ class UpdateModule(nn.Module):
         delta = self.delta(net).view(*output_dim)
         weight = self.weight(net).view(*output_dim)
         # dyweight = self.dyweight(net).view(*output_dim)
-
         # mask_flow = .25*self.mask_flow(net).view(*output_dim)
         # mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
@@ -245,15 +245,21 @@ class DroidNet(nn.Module):
 
         #NOTE: 先用低分辨率试一试
         coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+        # coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+
         target = coords1.clone()
 
         # highintrinsics = intrinsics.clone()
         # highintrinsics[...,:] *= 4
-
+        # objectmasks = torch.zeros_like(objectmasks)
+        # lowgtflow, lowmask = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
         lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
         # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
+        for i in range(lowgtflow.shape[1]):
+            gtflow = flow_to_image(lowgtflow[0,i].cpu().numpy(), lowmask[0,i,...,0].cpu().numpy())
+            cv2.imwrite('./result/gtflow/gtflow_{}.png'.format(i),gtflow)
 
-        Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, dyna_residual_list = [], [], [], [], [], []
+        Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, dyna_residual_list, low_disp_list = [], [], [], [], [], [],[]
 
         for step in range(num_steps):
             Gs = Gs.detach()
@@ -292,50 +298,109 @@ class DroidNet(nn.Module):
             # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
             # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
 
-            # lowmask = lowmask.expand(-1,-1,-1,-1,2)
+            # weight = lowmask.expand(-1,-1,-1,-1,2)
+            # weight = lowmask.expand(-1,-1,-1,-1,2)
 
             # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
             # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
 
-            for i in range(5):
-                Gs, ObjectGs, disps = dynamicBA(lowgtflow, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+            for i in range(2):
+                # Gs, disps, valid = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                Gs, ObjectGs, disps, valid = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
             coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            # coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
             # coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
         
             # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
             static_residual = (target - coords1)*valid_static
-            dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
-            
-            loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-            ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
-            print('-----------------')
-            print('frames are {}'.format(trackinfo['frames']))
-            print('trackid is {}'.format(trackinfo['trackid'].item()))
-            print('loss is {}'.format(loss.item()))
-            print('r_err is {}'.format(r_err.item()))
-            print('t_err is {}'.format(t_err.item()))
+            # dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
 
-            print('ob_loss is {}'.format(ob_loss.item()))
-            print('ob_r_err is {}'.format(ob_r_err.item()))
-            print('ob_t_err is {}'.format(ob_t_err.item()))
-
-            # if ob_loss > 2.0:
-            #     print('{} has too large loss!'.format(trackinfo['trackid'].item()))
-            #     print('frames are {}'.format(trackinfo['frames']))
-            #     print('its ob_loss is {}'.format(ob_loss.item()))
-            #     print('its r_error is {}'.format(ob_r_err.item()))
-            #     print('its t_err is {}'.format(ob_t_err.item()))
-
-            # print('-----------------')
             Gs_list.append(Gs)
             ObjectGs_list.append(ObjectGs)
             disp_list.append(upsample_flow(disps[..., None], mask_disp, 8, True)[...,0])
+            low_disp_list.append(disps)
             static_residual_list.append(static_residual)
-            dyna_residual_list.append(dyna_residual[dyna_residual>0])
+            # dyna_residual_list.append(dyna_residual[dyna_residual>0])
             flow_low_list.append(target)
 
-        return Gs_list, ObjectGs_list, disp_list, static_residual_list, dyna_residual_list, flow_low_list
+        loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+        ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+
+        # coords1, valid_static = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj ,return_depth = True)
+        # thresh = 0.005
+        # dj = 1.0/coords1[..., 2]
+        # djj = 1.0/gtdisps[:,jj]
+        # d01 = torch.zeros_like(dj)
+        # d10 = torch.zeros_like(dj)
+        # d11 = torch.zeros_like(dj)
+        # d01[:,:,:-1,:] = djj[:,:,1:,:]
+        # d10[:,:,:,:-1] = djj[:,:,:,1:]
+        # d11[:,:,:-1,:-1] = djj[:,:,1:,1:]
+        # counter = (((dj - djj)> thresh).float() + ((dj - d01)> thresh).float() + ((dj - d10)> thresh).float() + ((dj - d11)> thresh).float())
+        # masks = (counter>=2)
+
+        # thresh = 0.005 * torch.ones_like(disps[0].mean(dim=[1,2])).float()
+        # dirty_index = torch.tensor([0,1,2,3,4], device = 'cuda')
+        # count = droid_backends.depth_filter(Ps[0].data.float(), gtdisps[0].float(), intrinsics[0,0].float(), dirty_index, thresh)
+        # masks = ((count>=2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True)))
+
+        dynaflow = objectmasks[:,ii].long()
+
+        print('-----------------')
+        max_depth = (1/gtdisps).max()
+        depth_vis(gtdisps,'gt', max_depth)
+        depth_vis(disps,'dy', max_depth)
+        # depth_vis(gtdisps*masks,'filtered',max_depth)
+
+        # dynaflow2 = dynaflow.clone()
+        # dynaflow2[:,:2] = 0.0
+        diff_flow = (target - lowgtflow)
+        # diff_flow2 = (target - lowgtflow)[dynaflow2>0.0]
+
+        error_static_flow = torch.mean(torch.abs(diff_flow))
+        error_dyna_flow = torch.mean(torch.abs(diff_flow[dynaflow>0.0]))
+
+        diff_disps = (disps - gtdisps)
+        error_dyan_depth = torch.mean(torch.abs(diff_disps[objectmasks.long()>0.0]))
+        error_static_depth = torch.mean(torch.abs(diff_disps))
+
+        print('static depth error is {}'.format(error_static_depth))
+        print('dynamic depth error is {}'.format(error_dyan_depth))
+
+        print('static flow error is {}'.format(error_static_flow))
+        print('dynamic flow error is {}'.format(error_dyna_flow))
+
+        for i in range(target.shape[1]):
+            error_flow = torch.mean(torch.abs(diff_flow[:,i][dynaflow[:,i]>0.0]))
+            print('error of dynamic flow' + str(i) + ' is {}'.format(error_flow))
+
+        print('overall depth is {}'.format(1.0/torch.mean(gtdisps[objectmasks>0.0])))
+        print('frames are {}'.format(trackinfo['frames']))
+        print('trackid is {}'.format(trackinfo['trackid'].item()))
+        print('loss is {}'.format(loss.item()))
+        print('r_err is {}'.format(r_err.item()))
+        print('t_err is {}'.format(t_err.item()))
+
+        print('ob_loss is {}'.format(ob_loss.item()))
+        print('ob_r_err is {}'.format(ob_r_err.item()))
+        print('ob_t_err is {}'.format(ob_t_err.item()))
+
+        weight_vis = valid[...,0]*weight[...,0]
+        weight_vis[weight_vis>0.5] = 1.0
+        for i in range(target.shape[1]):
+
+            gt_dyna_flow = flow_to_image(lowgtflow[0,i].detach().cpu().numpy(), dynaflow[0,i].detach().cpu().numpy())
+            cv2.imwrite('./result/gt_dyna_flow/flow_gtdyna_'+ str(step) + '_' + str(i) +'.png', gt_dyna_flow)
+
+            pred_dyna_flow = flow_to_image(target[0,i].detach().cpu().numpy(), dynaflow[0,i].detach().cpu().numpy())
+            cv2.imwrite('./result/pred_dyna_flow/flow_preddyna_'+ str(step) + '_' + str(i) +'.png', pred_dyna_flow)
+
+            if (weight_vis[0,i].max() == 1.0):
+                target_flow = flow_to_image(target[0,i].detach().cpu().numpy(), weight_vis[0,i].detach().cpu().numpy())
+                cv2.imwrite('./result/pred_flow/flow_pred_'+ str(step) + '_' + str(i) +'.png', target_flow)
+
+        return Gs_list, ObjectGs_list, disp_list, static_residual_list, flow_low_list, low_disp_list
 
 def add_neighborhood_factors(t0, t1, r=2):
     """ add edges between neighboring frames within radius r """
@@ -403,13 +468,13 @@ def geoloss(objectposes, object_est, ii, jj):
     dP = objectposes[:,jj] * objectposes[:,ii].inv()
     dG = object_est[:,jj] * object_est[:,ii].inv()
 
+    s = fit_scale(dP, dG)
+    dG = dG.scale(s[:,None])
+
     d = (dG * dP.inv()).log()
 
     tau, phi = d.split([3,3], dim=-1)
     geodesic_loss = tau.norm(dim=-1).mean() + phi.norm(dim=-1).mean()
-
-    # s = fit_scale(dP, dG)
-    # dG = dG.scale(s[:,None])
 
     dE = Sim3(dG * dP.inv()).detach()
     r_err, t_err, s_err = pose_metrics(dE)
@@ -417,3 +482,9 @@ def geoloss(objectposes, object_est, ii, jj):
     t_err = t_err.mean()
 
     return geodesic_loss, r_err, t_err
+
+def depth_vis(disps, mode, max_depth):
+    depth = 100*((((1.0/disps).clamp(max=max_depth)) * (655.35/max_depth)).cpu().detach().numpy())
+
+    for i in range(5):
+        cv2.imwrite('./result/depth/depth' + mode +'_{}.png'.format(i),depth[0,i].astype(np.uint16))
