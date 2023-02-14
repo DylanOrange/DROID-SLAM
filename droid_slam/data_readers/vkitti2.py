@@ -107,6 +107,8 @@ class VKitti2(RGBDDataset):
             idx = apperance[n]
             raw_mat = torch.from_numpy(np.loadtxt(filepath, delimiter=' ', skiprows=1))
             mask = ((raw_mat[:,1] == 0) & (raw_mat[:,2] == id)) & (torch.isin(raw_mat[:, 0], torch.tensor(ids)))
+            if torch.count_nonzero(mask) == 0:
+                print('fault!')
             mat = raw_mat[mask]
             raw_pose = mat[:,7:13]
             r = raw_pose[:,3] +torch.pi/2

@@ -98,7 +98,7 @@ def droid_visualization(video, device="cuda:0"):
             points = droid_backends.iproj(SE3(poses).inv().data, disps, video.intrinsics[0]).cpu()
 
             thresh = droid_visualization.filter_thresh * torch.ones_like(disps.mean(dim=[1,2]))
-            
+            print(dirty_index)
             count = droid_backends.depth_filter(
                 video.poses, video.disps, video.intrinsics[0], dirty_index, thresh)
 

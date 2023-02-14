@@ -96,8 +96,8 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     C = safe_scatter_add_vec(Ck, kk, M)
     w = safe_scatter_add_vec(wk, kk, M)
 
-    # C = C + eta.view(*C.shape) + 1e-7
-    C = C + 1e-7
+    C = C + eta.view(*C.shape) + 1e-7
+    # C = C + 1e-7
 
     H = H.view(B, P, P, D, D)
     E = E.view(B, P, M, D, ht*wd)
@@ -112,7 +112,7 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
     disps = disps.clamp(min=0.0)
 
-    return poses, disps
+    return poses, disps, valid
 
 
 def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
@@ -170,7 +170,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     B, P, ht, wd = disps.shape#1,12,30,101
     N = ii.shape[0]#42
     D = poses.manifold_dim#6
-    batch_grid = trackinfo['grid']
+    # batch_grid = trackinfo['grid']
 
     ### 1: compute jacobians and residuals ###
     # coords, valid, (Ji_st, Jj_st, Jz_st) = pops.projective_transform(
@@ -278,7 +278,9 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
 
     E = torch.zeros(B, U, M, D, ht*wd, dtype=Ec.dtype, device = Ec.device)
     for i in range(B):
-        E[i] = torch.cat([Ec[i],Eo[i, trackinfo['apperance'][i][0]][fixedp:]], dim=0)
+        E[i, :U//2] = Ec[i]
+        E[i, U//2 + trackinfo['apperance'][i][0][fixedp:]-fixedp] = Eo[i, trackinfo['apperance'][i][0]][fixedp:]
+        # E[i] = torch.cat([Ec[i],Eo[i, trackinfo['apperance'][i][0]][fixedp:]], dim=0)
     #     Eo_list.append(Eo[i, trackinfo['apperance'][i][0]][fixedp:])
     # Eo = torch.cat(Eo_list, dim =0).unsqueeze(0)
     # E = torch.cat([Ec,Eo], dim=1)
@@ -302,7 +304,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
     disps = disps.clamp(min=0.0)
     
-    return poses, objectposes, disps
+    return poses, objectposes, disps, valid
 
 def cameraBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 

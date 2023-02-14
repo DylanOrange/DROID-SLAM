@@ -693,6 +693,7 @@ __global__ void depth_filter_kernel(
   if (threadIdx.x == 0) {
     ix = static_cast<int>(inds[block_id]);
     jx = (neigh_id < 3) ? ix - neigh_id - 1 : ix + neigh_id;
+    printf("ix is  %d, jx is %d \n", ix, jx);
     fx = intrinsics[0];
     fy = intrinsics[1];
     cx = intrinsics[2];

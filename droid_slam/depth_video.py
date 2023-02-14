@@ -123,7 +123,7 @@ class DepthVideo:
     def upsample(self, ix, mask):
         """ upsample disparity """
 
-        disps_up = cvx_upsample(self.disps[ix].unsqueeze(-1), mask)
+        disps_up = cvx_upsample(self.disps[ix].unsqueeze(-1), mask, 8)
         self.disps_up[ix] = disps_up.squeeze()
 
     def normalize(self):
