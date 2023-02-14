@@ -84,9 +84,9 @@ class RGBDDataset(data.Dataset):
         framenumber = len(inds)
         count = [torch.tensor([0])]
         trackidlist = []
-        area = torch.zeros(NCAR).long()
+        area = torch.zeros(NCAR)
         for i in range(framenumber):
-            arearank = torch.bincount(objectmasks[i]. flatten())
+            arearank = torch.bincount(objectmasks[i].int().flatten())
             area += scatter_sum(arearank, torch.arange(arearank.shape[0]), dim = 0, dim_size= NCAR)
             valid = arearank[arearank!=0].shape[0]
             count.append(count[-1]+valid)
@@ -97,17 +97,19 @@ class RGBDDataset(data.Dataset):
         fre = torch.bincount(trackid)
         frerank = torch.where(fre == torch.amax(fre))[0]
         TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))#找出出现频率最大的几辆车
-        if TRACKID.shape[0] > 8:
-            TRACKID = torch.from_numpy(np.intersect1d(arearank[-8:], frerank))
-        if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
-            frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1])))[0]
-            TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))
-            if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
-                frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1,torch.amax(fre)-2])))[0]
-                TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))
-        TRACKID = TRACKID[TRACKID!=0]
-        TRACKID = arearank[torch.isin(arearank, TRACKID).nonzero()[-1]]-1#最大面积的
-        # TRACKID = TRACKID[torch.randint(len(TRACKID), (1,))]
+        # if TRACKID.shape[0] > 8:
+        #     TRACKID = torch.from_numpy(np.intersect1d(arearank[-8:], frerank))
+        # if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
+        #     frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1])))[0]
+        #     TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))
+        #     if TRACKID.shape[0] == 1 and TRACKID == torch.tensor([0]):
+        #         frerank = torch.where(torch.isin(fre, torch.tensor([torch.amax(fre),torch.amax(fre)-1,torch.amax(fre)-2])))[0]
+        #         TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))
+        if len(TRACKID) > 1:
+            TRACKID = TRACKID[TRACKID!=0]
+            TRACKID = arearank[torch.isin(arearank, TRACKID).nonzero()[-1]]-1#最大面积
+        else:
+            TRACKID = TRACKID-2
         
         bins = torch.concat(count)
         Apperance = []
@@ -117,6 +119,8 @@ class RGBDDataset(data.Dataset):
             frames = torch.bucketize(ids,bins,right =True)-1
             N_app += len(frames)
             Apperance.append(frames)
+            if id == -2:
+                Apperance = [torch.arange(framenumber)]
 
         return TRACKID, N_app, Apperance
 
@@ -141,7 +145,7 @@ class RGBDDataset(data.Dataset):
             # single_mask = torch.where(mask == (id+1), 1.0, 0.0)
             # single_cropmask = torch.where(cropmask == (id+1), 1.0, 0.0)
             # sampled_mask = torch.nn.functional.interpolate(single_mask.unsqueeze(1), size = (30,101), mode = 'bicubic').int()
-            single_masklist.append(torch.where(mask == (id+1), 1.0, 0.0).double())
+            single_masklist.append(torch.where(mask == (id+1.0), 1.0, 0.0))
             # cropmask_list.append(torch.where(cropmask == (id+1), 1.0, 0.0))
         return torch.stack(single_masklist, dim = 0)
 
@@ -187,13 +191,15 @@ class RGBDDataset(data.Dataset):
         # while len(inds) < self.n_frames:
             # get other frames within flow threshold
 
+        n_all = len(self.dataset_index)
         step = 2
-        if 20<=ix<=810:
-            inds = [ix-2*step, ix-step, ix, ix+step, ix+2*step]
+        half = (self.n_frames//2)*step
+        if half<=ix<=n_all-half:
+            inds = np.arange(ix - half, ix +half,step)
         elif ix<20:
-            inds = [ix, ix+step, ix+2*step, ix+3*step, ix+4*step]
+            inds = np.arange(ix, ix + half*2,step)
         else:
-            inds = [ix-4*step, ix-3*step, ix-2*step, ix-step, ix]
+            inds= np.arange(ix - half*2, ix,step)
         
         inds =np.sort(inds)
         # k = (frame_graph[ix][1] > self.fmin) & (frame_graph[ix][1] < self.fmax)
@@ -234,20 +240,20 @@ class RGBDDataset(data.Dataset):
             objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[0])
             sampledmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[1])
 
-        images = np.stack(images)
-        objectmasks = np.stack(objectmasks)
-        depths = np.stack(depths)
-        poses = np.stack(poses)
-        intrinsics = np.stack(intrinsics)
-        sampledmasks = np.stack(sampledmasks)
+        images = np.stack(images).astype(np.float32)
+        depths = np.stack(depths).astype(np.float32)
+        poses = np.stack(poses).astype(np.float32)
+        intrinsics = np.stack(intrinsics).astype(np.float32)
+        objectmasks = np.stack(objectmasks).astype(np.float32)
+        sampledmasks = np.stack(sampledmasks).astype(np.float32)
 
         images = torch.from_numpy(images)
         N, h0, w0 = images.shape[:3]
 
         depths = torch.from_numpy(depths)
         poses = torch.from_numpy(poses)
-        objectmasks = torch.from_numpy(objectmasks).int()
-        sampledmasks = torch.from_numpy(sampledmasks).int()
+        objectmasks = torch.from_numpy(objectmasks)
+        sampledmasks = torch.from_numpy(sampledmasks)
         intrinsics = torch.from_numpy(intrinsics)
         intrinsics[:, 0:2] *= ((self.w1//self.scale)/ w0)
         intrinsics[:, 2:4] *= ((self.h1//self.scale)/ h0)
@@ -258,9 +264,8 @@ class RGBDDataset(data.Dataset):
 
         TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)#
 
-
         # objectmasks = torch.nn.functional.interpolate(objectmasks[:, None].double(), size = (self.h1//self.cropscale, self.w1//self.cropscale), mode= 'bicubic').int().squeeze(1)#5,375,1242 ->5,120,404
-        corner, rec = self.cornerinfo(sampledmasks, TRACKID)
+        # corner, rec = self.cornerinfo(sampledmasks, TRACKID)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].clone()
@@ -268,17 +273,21 @@ class RGBDDataset(data.Dataset):
         #     cv2.imwrite('./visualize/mask'+str(idx)+'.png', np.array(vis_image))
 
         images = images.permute(0, 3, 1, 2)
-        images = torch.nn.functional.interpolate(images.float(), size = (self.h1,self.w1), mode = 'bilinear')
+        images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1), mode = 'bilinear')
 
-        objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)
+        if TRACKID != -2:
+            objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)
+        else: 
+            objectposes = torch.zeros(1,self.n_frames,7, dtype = poses.dtype)
+            objectposes[...,-1] = 1.0
 
-        quanmask = torch.nn.functional.interpolate(objectmasks[:, None].float(), size = (self.h1, self.w1)).squeeze(1).int()
+        quanmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1, self.w1)).squeeze(1)
         quanmask = self.construct_objectmask(TRACKID, quanmask)
 
-        vis_image = images.permute(0,2,3,1).int()
-        vis_image[quanmask[0]>0] = torch.tensor([255,255,255], dtype = torch.int)
-        for i in range(5):
-            cv2.imwrite('./result/object/mask_{}.png'.format(i),vis_image[i].numpy())
+        # vis_image = images.permute(0,2,3,1).int()
+        # vis_image[quanmask[0]>0] = torch.tensor([255,255,255], dtype = torch.int)
+        # for i in range(vis_image.shape[0]):
+        #     cv2.imwrite('./result/object/mask_{}.png'.format(i),vis_image[i].numpy())
 
         fullmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
 
@@ -302,26 +311,27 @@ class RGBDDataset(data.Dataset):
         # if torch.isin(12, TRACKID) and 1.0/torch.mean(cropdisps[cropmasks>0.0]) > 20.0:
         #     cropdisps[:] = -0.1
             
-        batchgrid = batch_grid(corner, rec)
+        # batchgrid = batch_grid(corner, rec)
         
         trackinfo = {
             'trackid': TRACKID.to('cuda'),
             'apperance': [x.to('cuda') for x in Apperance],
             'n_app': N_app,
             'frames': inds,
-            'corner': corner.to('cuda'),
-            'rec': rec.to('cuda'),
-            'grid': tuple(t.to('cuda') for t in batchgrid)
+            # 'corner': corner.to('cuda'),
+            # 'rec': rec.to('cuda'),
+            # 'grid': tuple(t.to('cuda') for t in batchgrid)
         }
 
         # scale scene
+        distance = torch.mean((sampleddepths.squeeze(1))[(quanmask.int())[0]>0.0])
         if len(disps[disps>0.01]) > 0:
             s = disps[disps>0.01].mean()
             disps = disps / s
             poses[...,:3] *= s
             objectposes[...,:3] *= s
 
-        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo
+        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo, distance, s.to('cuda')
 
     def __len__(self):
         return len(self.dataset_index)

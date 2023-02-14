@@ -97,10 +97,10 @@ def train(args):
         for i_batch, item in enumerate(train_loader):
             optimizer.zero_grad()
 
-            images, poses, objectposes, objectmasks, disps, quanmask, intrinsics, trackinfo = item
+            images, poses, objectposes, objectmasks, disps, quanmask, intrinsics, trackinfo, distance, scale = item
 
-            # if torch.mean(cropdisps) < 0.0:
-            #     continue
+            if distance > 20.0 or trackinfo['trackid'] == -2:
+                continue
             # convert poses w2c -> c2w
             Ps = SE3(poses)#这里暂时使用w2c
             ObjectPs = SE3(objectposes[0]).inv()
@@ -139,9 +139,9 @@ def train(args):
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
                 static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
                 # dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list)
-                error_high, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list)
+                error_low, error_high, error_dyna, error_depth, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list, scale)
 
-                loss =  args.w1*geo_loss  + args.w2 * static_resi_loss  + args.w3 * error_high 
+                loss =  args.w1*geo_loss  + args.w2 * static_resi_loss  + args.w3 * error_high  + args.w3 * error_low + 10*args.w3 * error_depth + args.w3 * error_dyna
                 loss.backward()
 
                 Gs = poses_est[-1].detach()
@@ -157,8 +157,10 @@ def train(args):
             loss = {
                 'geo_loss':geo_loss.item(),
                 'Obgeo_loss':Obgeo_loss.item(),
-                # 'error_low':error_low.item(),
+                'error_low':error_low.item(),
                 'error_high':error_high.item(), 
+                'error_dyna':error_dyna.item(), 
+                'weighted_error_depth':error_depth.item(), 
                 'static_resi_loss':static_resi_loss.item(),
                 # 'dyna_resi_loss':dyna_resi_loss.item(),
             }
@@ -188,18 +190,18 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default='test', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore',default='./checkpoints/30*101_15_2_objectflow_008000.pth')
-    # parser.add_argument('--ckpt', help='checkpoint to restore',default='droid.pth')
+    # parser.add_argument('--ckpt', help='checkpoint to restore',default='./checkpoints/30*101_15_2_objectflow_008000.pth')
+    parser.add_argument('--ckpt', help='checkpoint to restore',default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='../autodl-tmp/vkitti/Scene20', help="path to dataset directory")
+    parser.add_argument('--datapath', default='../autodl-tmp/vkitti/Scene18', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=12)
-    parser.add_argument('--steps', type=int, default=250000)
-    parser.add_argument('--lr', type=float, default=0.00025)
+    parser.add_argument('--steps', type=int, default=80000)
+    parser.add_argument('--lr', type=float, default=0.0005)
     parser.add_argument('--clip', type=float, default=2.5)
-    parser.add_argument('--n_frames', type=int, default=5)
+    parser.add_argument('--n_frames', type=int, default=6)
 
     parser.add_argument('--w1', type=float, default=10.0)
     parser.add_argument('--w2', type=float, default=0.01)

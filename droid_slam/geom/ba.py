@@ -170,7 +170,7 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
     B, P, ht, wd = disps.shape#1,12,30,101
     N = ii.shape[0]#42
     D = poses.manifold_dim#6
-    batch_grid = trackinfo['grid']
+    # batch_grid = trackinfo['grid']
 
     ### 1: compute jacobians and residuals ###
     # coords, valid, (Ji_st, Jj_st, Jz_st) = pops.projective_transform(
@@ -278,7 +278,8 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
 
     E = torch.zeros(B, U, M, D, ht*wd, dtype=Ec.dtype, device = Ec.device)
     for i in range(B):
-        E[i] = torch.cat([Ec[i],Eo[i, trackinfo['apperance'][i][0]][fixedp:]], dim=0)
+        E[i, :U//2] = Ec[i]
+        E[i, U//2 + trackinfo['apperance'][i][0][fixedp:]-fixedp] = Eo[i, trackinfo['apperance'][i][0]][fixedp:]
     #     Eo_list.append(Eo[i, trackinfo['apperance'][i][0]][fixedp:])
     # Eo = torch.cat(Eo_list, dim =0).unsqueeze(0)
     # E = torch.cat([Ec,Eo], dim=1)

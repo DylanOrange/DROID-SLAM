@@ -1,4 +1,6 @@
+from cmath import nan
 from collections import OrderedDict
+from re import S
 import numpy as np
 import torch
 import cv2
@@ -188,7 +190,7 @@ def residual_loss(residuals, gamma=0.9):
 
 #     return error_low, error_high, error_st, metrics
 
-def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_dispest, gamma=0.9):
+def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_dispest, scale, gamma=0.9):
     """ optical flow loss """
 
     ii, jj, kk = graph_to_edge_list(graph)
@@ -198,7 +200,7 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
         validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
     validmask = torch.stack(validmasklist, dim=0)
 
-    lowdisps = disps[:,:,3::8,3::8]
+    lowdisps = disps[:,:,3::8,3::8].clone()
 
     highintrinsics = intrinsics.clone()
     highintrinsics[...,:] *= 8
@@ -213,52 +215,64 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     highmask = highmask * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
 
     n = len(poses_est)
-    # error_low = 0
-    # error_dyna = 0
+    error_low = 0
+    error_dyna = 0
     error_high = 0
+    weighted_error_depth = 0
+
+    s_disps = disps*scale
+    s_lowdisps = lowdisps* scale
 
     for i in range(n):
         w = gamma ** (n - i - 1)
 
         #看预测的流准不准
         i_error_low = (lowgtflow - flow_low_list[i]).abs()
-        # error_low += w*(lowmask*i_error_low).mean()
+        error_low += w*(lowmask*i_error_low).mean()
 
         #看预测的深度和Pose准不准
         # coords_resi, highmask1 = projective_transform(poses_est[i], disps_est[i], highintrinsics, ii, jj)
         coords_resi, highmask1 = dyprojective_transform(poses_est[i], disps_est[i], highintrinsics, ii, jj, validmask, objectposes_est[i], quanmask[0])
 
+        valid_dyna = (1.0/s_lowdisps < 30.0)*(1.0/s_lowdisps > 0.2)*(objectmasks[0]>0)
+        diff_dyna = torch.abs(s_lowdisps - low_dispest[i]*scale)
+        error_depth = torch.mean((diff_dyna/s_lowdisps)[valid_dyna])
+        weighted_error_depth += w*error_depth
+
         #动态区域流
         dymask = objectmasks[0,:,ii]
         epe_dyna = i_error_low[dymask>0.5]
-        # error_dyna += w * epe_dyna.mean()
+        error_dyna += w * epe_dyna.mean()
 
         v = (highmask1 * highmask).squeeze(dim=-1)
         epe_high = v * (highgtflow - coords_resi).norm(dim=-1)
         error_high += w * epe_high.mean()
 
     #depth evaluation
+    
+    #depth visualization
+    # gthighdepth = 1.0/(disps*scale)
+    # gthighdepth = 100*gthighdepth.cpu().numpy()
+    # gtlowdepth = 1.0/(lowdisps*scale)
+    # gtlowdepth = 100*gtlowdepth.cpu().numpy()
 
-    gthighdepth = 1.0/disps
-    gthighdepth = 100*gthighdepth.cpu().numpy()
-    gtlowdepth = 1.0/lowdisps
-    gtlowdepth = 100*gtlowdepth.cpu().numpy()
+    # prehighdepth = 1.0/(disps_est[-1]*scale)
+    # prehighdepth = 100*prehighdepth.clamp(max=655.35).cpu().detach().numpy()
+    # prelowdepth = 1.0/(low_dispest[-1]*scale)
+    # prelowdepth = 100*prelowdepth.clamp(max=655.35).cpu().detach().numpy()
 
-    prehighdepth = 1.0/disps_est[-1]
-    prehighdepth = 100*prehighdepth.clamp(max=655.35).cpu().detach().numpy()
-    prelowdepth = 1.0/low_dispest[-1]
-    prelowdepth = 100*prelowdepth.clamp(max=655.35).cpu().detach().numpy()
+    # for i in range(5):
+    #     cv2.imwrite('./result/objectflow/gthighdepth_{}.png'.format(i),gthighdepth[0,i].astype(np.uint16))
+    #     cv2.imwrite('./result/objectflow/gtlowdepth_{}.png'.format(i),gtlowdepth[0,i].astype(np.uint16))
+    #     cv2.imwrite('./result/objectflow/prehighdepth_{}.png'.format(i),prehighdepth[0,i].astype(np.uint16))
+    #     cv2.imwrite('./result/objectflow/prelowdepth_{}.png'.format(i),prelowdepth[0,i].astype(np.uint16))
+    
+    s_disps_est = disps_est[-1]* scale
+    s_low_dispest = low_dispest[-1] * scale
 
-    for i in range(5):
-        cv2.imwrite('./result/objectflow/gthighdepth_{}.png'.format(i),gthighdepth[0,i].astype(np.uint16))
-        cv2.imwrite('./result/objectflow/gtlowdepth_{}.png'.format(i),gtlowdepth[0,i].astype(np.uint16))
-        cv2.imwrite('./result/objectflow/prehighdepth_{}.png'.format(i),prehighdepth[0,i].astype(np.uint16))
-        cv2.imwrite('./result/objectflow/prelowdepth_{}.png'.format(i),prelowdepth[0,i].astype(np.uint16))
-
-    valid_high = (1.0/disps < 30.0)*(1.0/disps > 0.5)*(disps_est[-1] >0.0)
-    valid_high[0,0] = False
-    high_gt = (1.0/disps)[valid_high]
-    high_pred = (1.0/disps_est[-1])[valid_high]
+    valid_high = (1.0/s_disps < 30.0)*(1.0/s_disps > 0.2)
+    high_gt = (s_disps)[valid_high]
+    high_pred = (s_disps_est)[valid_high]
 
     high_diff = high_gt - high_pred
     abs_high_diff = torch.abs(high_diff)
@@ -269,19 +283,18 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     # squared_rel_error_high = torch.mean(squared_diff/high_gt)
     rmse_high = torch.sqrt(torch.mean(squared_diff))
     
-    valid_low = (1.0/lowdisps < 30.0)*(1.0/lowdisps > 0.5)*(low_dispest[-1] >0.0)
-    valid_low[0,0] = False
-    low_gt = (1.0/lowdisps)[valid_low]
-    low_pred = (1.0/low_dispest[-1])[valid_low]
+    valid_low = (1.0/s_lowdisps < 30.0)*(1.0/s_lowdisps > 0.2)
 
-    low_diff = low_gt - low_pred
+    low_diff = s_lowdisps - s_low_dispest
     abs_low_diff = torch.abs(low_diff)
     squared_diff = low_diff*low_diff
-    abs_low_error = torch.mean(abs_low_diff)
+    abs_low_error = torch.mean(abs_low_diff[valid_low])
     # abs_low_inv_error = torch.mean(torch.abs((lowdisps - low_dispest[-1])[valid_low]))
-    abs_re_low_error = torch.mean(abs_low_diff/low_gt)
+    abs_re_low_error = torch.mean((abs_low_diff/s_lowdisps)[valid_low])
+    # valid_dyna = valid_low*objectmasks[0]
+    # error_depth = torch.mean((abs_low_diff/s_lowdisps)[valid_dyna.bool()])
     # squared_rel_error_low = torch.mean(squared_diff/low_gt)
-    rmse_low = torch.sqrt(torch.mean(squared_diff))
+    rmse_low = torch.sqrt(torch.mean(squared_diff[valid_low]))
 
     epe_low = (flow_low_list[-1] - lowgtflow).norm(dim=-1)
     epe_low = epe_low.reshape(-1)[lowmask.reshape(-1) > 0.5]
@@ -306,11 +319,12 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
         'abs_re_high_error': abs_re_high_error.item(),
         'abs_re_low_error':abs_re_low_error.item(),
 
+        'error_depth': error_depth.item(),
+
         # 'squared_rel_error_high':squared_rel_error_high.item(),
         # 'squared_rel_error_low':squared_rel_error_low.item(),
 
         # 'abs_low_inv_error':abs_low_inv_error.item(),
         # 'abs_high_inv_error':abs_high_inv_error.item(),
     }
-
-    return error_high, metrics
+    return error_low, error_high, error_dyna, weighted_error_depth, metrics

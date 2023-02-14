@@ -103,18 +103,18 @@ class VKitti2(RGBDDataset):
         # print('frames are {}'.format(ids))
 
         for n, id in enumerate(trackid):
-            objectpose = torch.zeros((len(ids), 7)).double()
+            objectpose = torch.zeros((len(ids), 7), dtype = torch.float)
             idx = apperance[n]
-            raw_mat = torch.from_numpy(np.loadtxt(filepath, delimiter=' ', skiprows=1))
+            raw_mat = torch.from_numpy(np.loadtxt(filepath, dtype = np.float32, delimiter=' ', skiprows=1))
             mask = ((raw_mat[:,1] == 0) & (raw_mat[:,2] == id)) & (torch.isin(raw_mat[:, 0], torch.tensor(ids)))
             mat = raw_mat[mask]
             raw_pose = mat[:,7:13]
             r = raw_pose[:,3] +torch.pi/2
             rotation = R.from_euler('y', r)
-            o2w = torch.concat((raw_pose[:, 0:3], torch.from_numpy(rotation.as_quat())), dim=1)
+            o2w = torch.concat((raw_pose[:, 0:3], torch.from_numpy(rotation.as_quat()).float()), dim=1)
             objectpose[idx] = o2w
             noidx = torch.from_numpy(np.setdiff1d(idx, np.arange(len(ids))))
-            objectpose[noidx] = torch.tensor([-0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]).double()
+            objectpose[noidx] = torch.tensor([-0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype = torch.float)
             objectpose_list.append(objectpose)
         if objectpose_list == []:
             print('no trackid !! {}'.format(ids))
