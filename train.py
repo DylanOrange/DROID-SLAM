@@ -95,11 +95,15 @@ def train(args):
 
     while should_keep_training:
         for i_batch, item in enumerate(train_loader):
+            bigbreak = False
+
             optimizer.zero_grad()
 
-            images, poses, objectposes, objectmasks, disps, quanmask, intrinsics, trackinfo, distance, scale = item
+            images, poses, objectposes, objectmasks, disps, quanmask, intrinsics, trackinfo, objectdistance, scale = item
 
-            if distance > 20.0 or trackinfo['trackid'] == -2:
+            if objectdistance.mean() > 20.0 or trackinfo['trackid'] == -2:
+                continue
+            elif objectdistance.min() < 3.0 or objectdistance.max() > 30.0:
                 continue
             # convert poses w2c -> c2w
             Ps = SE3(poses)#这里暂时使用w2c
@@ -141,12 +145,23 @@ def train(args):
                 # dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list)
                 error_low, error_high, error_dyna, error_depth, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list, scale)
 
-                loss =  args.w1*geo_loss  + args.w2 * static_resi_loss  + args.w3 * error_high  + args.w3 * error_low + 10*args.w3 * error_depth + args.w3 * error_dyna
+                if total_steps > 15000:
+                    if flow_metrics['abs_low_dyna_error'] > 4*flow_metrics['abs_low_error'] and Obgeo_metrics['ob_rot_error'] > 0.5:
+                        Gs = poses_est[-1].detach()
+                        ObjectGs = objectposes_est[-1].detach()
+                        disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+                        bigbreak = True
+                        break
+
+                loss =  args.w1*geo_loss  + + args.w1*Obgeo_loss + args.w2 * static_resi_loss  + args.w3 * error_high  + args.w3 * error_low + 10*args.w3 * error_depth + 10*args.w3 * error_dyna
                 loss.backward()
 
                 Gs = poses_est[-1].detach()
                 ObjectGs = objectposes_est[-1].detach()
                 disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+
+            if bigbreak == True:
+                continue
 
             metrics = {}
             metrics.update(geo_metrics)
@@ -193,13 +208,13 @@ if __name__ == '__main__':
     # parser.add_argument('--ckpt', help='checkpoint to restore',default='./checkpoints/30*101_15_2_objectflow_008000.pth')
     parser.add_argument('--ckpt', help='checkpoint to restore',default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='../autodl-tmp/vkitti/Scene18', help="path to dataset directory")
+    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2/Scene18', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=12)
+    parser.add_argument('--iters', type=int, default=1)
     parser.add_argument('--steps', type=int, default=80000)
-    parser.add_argument('--lr', type=float, default=0.0005)
+    parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=6)
 

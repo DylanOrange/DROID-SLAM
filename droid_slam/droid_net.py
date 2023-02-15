@@ -80,20 +80,20 @@ class GraphAgg(nn.Module):
         net = self.relu(self.conv1(net))#14,128,30,101
 
         net = net.view(batch, num, 128, ht, wd)#1,14,128,30,101
-        net_less = scatter_mean(net, ix, dim=1)#1,5,128,30,101
+        net = scatter_mean(net, ix, dim=1)#1,5,128,30,101
 
         # net = net.view(-1, 128, ht, wd)#14,128,30,101
-        net_less = net_less.view(-1, 128, ht, wd)#5,128,30,101
+        net = net.view(-1, 128, ht, wd)#5,128,30,101
 
         # less_size = net_less.shape[0]
         # net = torch.cat([net_less, net], dim = 0)
-        net = self.relu(self.conv2(net_less))#19,128,30,101
+        net = self.relu(self.conv2(net))#19,128,30,101
 
         # net_less = net[0:less_size]
         # net_more = net[less_size:]
 
-        eta = self.eta(net_less).view(batch, -1, ht, wd)
-        upmask_disp = self.upmask(net_less).view(batch, -1, 8*8*9, ht, wd)
+        eta = self.eta(net).view(batch, -1, ht, wd)
+        upmask_disp = self.upmask(net).view(batch, -1, 8*8*9, ht, wd)
         # upmask_flow = self.upmask_flow(net_more).view(batch, -1, 4*4*9, ht, wd)#1,14,576,30,101
 
         return .01 * eta, upmask_disp
@@ -259,7 +259,7 @@ class DroidNet(nn.Module):
         #     gtflow = flow_to_image(lowgtflow[0,i].cpu().numpy(), lowmask[0,i,...,0].cpu().numpy())
         #     cv2.imwrite('./result/gtflow/gtflow_{}.png'.format(i),gtflow)
 
-        Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, dyna_residual_list, low_disp_list = [], [], [], [], [], [],[]
+        Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, low_disp_list = [], [], [], [], [], []
 
         for step in range(num_steps):
             Gs = Gs.detach()
@@ -269,12 +269,12 @@ class DroidNet(nn.Module):
             target = target.detach()
 
             # extract motion features
-            corr = corr_fn(coords1.float())
+            corr = corr_fn(coords1)
             resd = target - coords1
             flow = coords1 - coords0
 
             motion = torch.cat([flow, resd], dim=-1)
-            motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0).float()
+            motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
             net, delta, weight, eta, mask_disp = \
                 self.update(net, inp, corr, motion, ii, jj)

@@ -107,7 +107,8 @@ class RGBDDataset(data.Dataset):
         #         TRACKID = torch.from_numpy(np.intersect1d(arearank[-frerank.shape[0]:], frerank))
         if len(TRACKID) > 1:
             TRACKID = TRACKID[TRACKID!=0]
-            TRACKID = arearank[torch.isin(arearank, TRACKID).nonzero()[-1]]-1#最大面积
+            TRACKID = TRACKID[torch.randint(len(TRACKID), (1,))]-1
+            # TRACKID = arearank[torch.isin(arearank, TRACKID).nonzero()[-1]]-1#最大面积
         else:
             TRACKID = TRACKID-2
         
@@ -323,15 +324,22 @@ class RGBDDataset(data.Dataset):
             # 'grid': tuple(t.to('cuda') for t in batchgrid)
         }
 
-        # scale scene
-        distance = torch.mean((sampleddepths.squeeze(1))[(quanmask.int())[0]>0.0])
+        # scale scened
+        objectdistance = (sampleddepths.squeeze(1))[(quanmask.int())[0]>0.0]
+        # meandistance = objectdistance.mean()
+        # print('real scale mean depth is {}'.format(meandistance))
+
+        # if TRACKID != -2:
+        #     print('real scale least depth is {}'.format(objectdistance.min()))
+        #     print('real scale farest depth is {}'.format(objectdistance.max()))
+
         if len(disps[disps>0.01]) > 0:
             s = disps[disps>0.01].mean()
             disps = disps / s
             poses[...,:3] *= s
             objectposes[...,:3] *= s
 
-        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo, distance, s.to('cuda')
+        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo, objectdistance, s.to('cuda')
 
     def __len__(self):
         return len(self.dataset_index)

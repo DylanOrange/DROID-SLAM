@@ -188,8 +188,8 @@ def dynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    Joi = Joi.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
-    Joj = Joj.reshape(B, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
+    Joi = Joi.reshape(B, N, -1, D)#1,18,30,101,2,6->1,18,6060,6
+    Joj = Joj.reshape(B, N, -1, D)#1,18,30,101,2,6->1,18,6060,6
     # Jci = torch.zeros_like(Jci)
     # Jcj = torch.zeros_like(Jcj)
     # Joi = torch.zeros_like(Joi)

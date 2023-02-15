@@ -54,8 +54,8 @@ def iproj(disps, intrinsics, jacobian=False, batch_grid = None):
         x, y = batch_grid[0][0], batch_grid[1][0]
     else:
         y, x = torch.meshgrid(
-            torch.arange(ht).to(disps.device).float(),
-            torch.arange(wd).to(disps.device).float())#2,49,85
+            torch.arange(ht, dtype = disps.dtype, device = disps.device),
+            torch.arange(wd, dtype = disps.dtype, device = disps.device))#2,49,85
 
     i = torch.ones_like(disps)
     X = (x - cx) / fx
