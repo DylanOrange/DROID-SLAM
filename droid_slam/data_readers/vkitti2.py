@@ -1,4 +1,5 @@
 
+from configparser import Interpolation
 import numpy as np
 import torch
 import glob
@@ -60,6 +61,7 @@ class VKitti2(RGBDDataset):
                 glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/instanceSegmentation/Camera_0/*.png')))
             # 注意camera pose的选择
 
+            objectposepath = osp.join(scene, VKitti2.split[self.split_mode], 'pose.txt')
             poses = np.loadtxt(
                 osp.join(scene, VKitti2.split[self.split_mode], 'extrinsic.txt'), delimiter=' ', skiprows=1)[::2, 2:]
             poses = poses.reshape(-1, 4, 4)
@@ -67,6 +69,10 @@ class VKitti2(RGBDDataset):
             t = poses[:, :3, 3] / VKitti2.DEPTH_SCALE
             poses = np.concatenate((t, r), axis=1)
             # translation + Quaternion
+            with open(osp.join(scene, VKitti2.split[self.split_mode], 'info.txt')) as f:
+                objectid = [int(line.split()[0]) for line in f.readlines()[1:]]
+            
+            object = self.object_read(objectposepath, objectid, objectmasks)
 
             intrinsics = [VKitti2.calib_read()] * len(images)
             scene = '/'.join(scene.split('/'))
@@ -79,6 +85,8 @@ class VKitti2(RGBDDataset):
 
             graph = self.build_frame_graph(poses, depths, intrinsics)
 
+            objectinfo = self.build_object_frame_graph(poses, depths, intrinsics, object)
+
             # if self.flow_label:
             #     fo_flows = sorted(
             #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/forwardFlow/Camera_0/*.png')))
@@ -90,7 +98,7 @@ class VKitti2(RGBDDataset):
             #     masks = sorted(
             #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/dynamicMask/Camera_0/*.npy')))
             scene_info[scene] = {'images': images, 'depths': depths, 'objectmasks': objectmasks, 
-                                     'poses': poses, 'intrinsics': intrinsics, 'graph': graph}
+                                     'poses': poses, 'intrinsics': intrinsics, 'graph': graph, 'object': objectinfo}
 
         return scene_info
 
@@ -121,6 +129,25 @@ class VKitti2(RGBDDataset):
         objectposes = torch.stack(objectpose_list, dim = 0)
         return objectposes
 
+    def object_read(self, datapath, trackid, maskpath):
+        object = {}
+        for  id in trackid:
+            raw_mat = np.loadtxt(datapath, dtype = np.float32, delimiter=' ', skiprows=1)
+            mask = (raw_mat[:,1] == 0) & (raw_mat[:,2] == id)
+            mat = raw_mat[mask]
+            raw_pose = mat[:,7:13]
+            r = raw_pose[:,3] +np.pi/2
+            rotation = R.from_euler('y', r)
+            poses = np.concatenate((raw_pose[:, 0:3], rotation.as_quat().astype(np.float32)), axis=1)
+            indexlist = mat[:,0].astype(np.int32)
+            objectmasks = []
+            for i in indexlist:
+                mask = self.objectmask_read(maskpath[i])[1]
+                objectmasks.append(np.where(mask == (id+1.0), 1.0, 0.0))
+            objectmasks = np.stack(objectmasks).astype(np.float32) 
+            object[id] =[indexlist, poses, objectmasks]
+        return object
+
     @staticmethod
     def calib_read():
         return np.array([725.0087, 725.0087, 620.5, 187])
@@ -132,12 +159,24 @@ class VKitti2(RGBDDataset):
     @staticmethod
     def objectmask_read(mask_file):
         mask = Image.open(mask_file)
-        return np.array(mask), np.array(mask.resize((404,120)))
+        return np.array(mask), np.array(mask.resize((101,30), Image.NEAREST))
 
     @staticmethod
     def depth_read(depth_file):
         depth = cv2.imread(depth_file, cv2.IMREAD_ANYCOLOR |
                            cv2.IMREAD_ANYDEPTH) / (VKitti2.DEPTH_SCALE*100)
+        depth[depth == np.nan] = 1.0
+        depth[depth == np.inf] = 1.0
+        depth[depth == 0] = 1.0
+        return depth
+    
+    @staticmethod
+    def vkittidepth_read(depth_file):
+        # depth = cv2.imread(depth_file, cv2.IMREAD_ANYCOLOR |
+        #                    cv2.IMREAD_ANYDEPTH) / (VKitti2.DEPTH_SCALE*100)
+        # resize(mask.resize((101,30)), (101,30), interpolation = cv2.INTER_NEAREST)
+        depth = Image.open(depth_file)                
+        depth = np.array(depth.resize((101,30), Image.NEAREST)) / (VKitti2.DEPTH_SCALE*100)
         depth[depth == np.nan] = 1.0
         depth[depth == np.inf] = 1.0
         depth[depth == 0] = 1.0

@@ -326,23 +326,23 @@ class DroidNet(nn.Module):
         # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
         # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
 
-        # # coords1, valid_static = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj ,return_depth = True)
-        # # thresh = 0.005
-        # # dj = 1.0/coords1[..., 2]
-        # # djj = 1.0/gtdisps[:,jj]
-        # # d01 = torch.zeros_like(dj)
-        # # d10 = torch.zeros_like(dj)
-        # # d11 = torch.zeros_like(dj)
-        # # d01[:,:,:-1,:] = djj[:,:,1:,:]
-        # # d10[:,:,:,:-1] = djj[:,:,:,1:]
-        # # d11[:,:,:-1,:-1] = djj[:,:,1:,1:]
-        # # counter = (((dj - djj)> thresh).float() + ((dj - d01)> thresh).float() + ((dj - d10)> thresh).float() + ((dj - d11)> thresh).float())
-        # # masks = (counter>=2)
+        # # # coords1, valid_static = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj ,return_depth = True)
+        # # # thresh = 0.005
+        # # # dj = 1.0/coords1[..., 2]
+        # # # djj = 1.0/gtdisps[:,jj]
+        # # # d01 = torch.zeros_like(dj)
+        # # # d10 = torch.zeros_like(dj)
+        # # # d11 = torch.zeros_like(dj)
+        # # # d01[:,:,:-1,:] = djj[:,:,1:,:]
+        # # # d10[:,:,:,:-1] = djj[:,:,:,1:]
+        # # # d11[:,:,:-1,:-1] = djj[:,:,1:,1:]
+        # # # counter = (((dj - djj)> thresh).float() + ((dj - d01)> thresh).float() + ((dj - d10)> thresh).float() + ((dj - d11)> thresh).float())
+        # # # masks = (counter>=2)
 
-        # # thresh = 0.005 * torch.ones_like(disps[0].mean(dim=[1,2])).float()
-        # # dirty_index = torch.tensor([0,1,2,3,4], device = 'cuda')
-        # # count = droid_backends.depth_filter(Ps[0].data.float(), gtdisps[0].float(), intrinsics[0,0].float(), dirty_index, thresh)
-        # # masks = ((count>=2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True)))
+        # # # thresh = 0.005 * torch.ones_like(disps[0].mean(dim=[1,2])).float()
+        # # # dirty_index = torch.tensor([0,1,2,3,4], device = 'cuda')
+        # # # count = droid_backends.depth_filter(Ps[0].data.float(), gtdisps[0].float(), intrinsics[0,0].float(), dirty_index, thresh)
+        # # # masks = ((count>=2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True)))
 
         # dynaflow = objectmasks[:,ii].long()
 

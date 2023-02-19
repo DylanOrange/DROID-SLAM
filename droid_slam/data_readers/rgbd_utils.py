@@ -141,6 +141,89 @@ def compute_distance_matrix_flow(poses, disps, intrinsics):
 
     return matrix
 
+def compute_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
+    """ compute flow magnitude between all pairs of frames """
+    object_matrix = []
+    intrinsics = torch.from_numpy(intrinsics).float().cuda()[None]
+    invalidid = []
+    for id, info in object.items():
+        indexlist = info[0]
+
+        objectmasks = torch.from_numpy(info[2])
+        disps = torch.from_numpy(alldisps[indexlist]).float()
+
+        depths =  1.0/disps
+
+        objectdisps = disps*objectmasks
+        objectdepths  = depths*objectmasks
+        mean = objectdepths.sum((1,2))/objectmasks.sum((1,2))
+        min = 1.0/objectdisps.amax((1,2))
+        max = objectdepths.amax((1,2))
+
+        #如何评价遮挡
+        valid = (min > 2.0) * (max < 30.0) * (mean < 20.0)
+
+        #如果剩下的车不到五帧，就放弃这辆车
+        if len(valid[valid>0])<5:
+            invalidid.append(id)
+            continue
+        
+        disps = disps[valid].cuda()[None]
+
+        objectmasks = objectmasks[valid].cuda()[None]
+
+        objectposes = torch.from_numpy(info[1][valid]).cuda()[None]
+        objectposes = SE3(objectposes).inv()
+
+        poses = torch.from_numpy(allposes[indexlist][valid]).float().cuda()[None]
+        poses = SE3(poses)
+
+        object[id] = [info[0][valid], info[1][valid], info[2][valid]]
+        
+        N = poses.shape[1]
+        
+        ii, jj = torch.meshgrid(torch.arange(N), torch.arange(N))
+        ii = ii.reshape(-1).cuda()
+        jj = jj.reshape(-1).cuda()
+
+        MAX_FLOW = 100.0
+        matrix = np.zeros((N, N), dtype=np.float32)
+
+        s = (N*N)//10
+        for i in range(0, ii.shape[0], s):
+            flow1, val1 = pops.induced_object_flow(poses, disps, intrinsics, objectposes, objectmasks, ii[i:i+s], jj[i:i+s])
+            flow2, val2 = pops.induced_object_flow(poses, disps, intrinsics, objectposes, objectmasks, jj[i:i+s], ii[i:i+s])
+
+            # flow1st, _ = pops.induced_flow(poses, disps, intrinsics, ii[i:i+s], jj[i:i+s])
+            # flow2st, _ = pops.induced_flow(poses, disps, intrinsics, jj[i:i+s], ii[i:i+s])
+
+            # ii_test = ii[i:i+s]
+            # staticmask = 1 - objectmasks[:, ii_test]
+            # sta1 = flow1*staticmask[..., None]
+            # sta2 = flow1st*staticmask[..., None]
+           
+            flow = torch.stack([flow1, flow2], dim=2)
+            val = torch.stack([val1, val2], dim=2)
+            mask = torch.stack([objectmasks[:, ii[i:i+s]], objectmasks[:, jj[i:i+s]]], dim=2)
+            
+            mag = flow.norm(dim=-1).clamp(max=MAX_FLOW)
+            mag = mag.view(mag.shape[1], -1)
+            val = val.view(val.shape[1], -1)
+            mask = mask.view(mask.shape[1], -1)
+            masksum = mask.sum(-1)
+            validsum =  (val*mask).sum(-1)
+
+            mag = (mag*val*mask).sum(-1) / validsum
+            mag[validsum/masksum < 0.7] = np.inf
+
+            i1 = ii[i:i+s].cpu().numpy()
+            j1 = jj[i:i+s].cpu().numpy()
+            matrix[i1, j1] = mag.cpu().numpy()
+        object_matrix.append(matrix)
+    for id in invalidid:
+        del object[id]
+    return object_matrix, object
+
 
 def compute_distance_matrix_flow2(poses, disps, intrinsics, beta=0.4):
     """ compute flow magnitude between all pairs of frames """

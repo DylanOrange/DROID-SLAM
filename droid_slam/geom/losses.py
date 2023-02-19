@@ -231,7 +231,8 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
 
         #看预测的流准不准
         i_error_low = (lowgtflow - flow_low_list[i]).abs()
-        error_low += w*(lowmask*i_error_low).mean()
+        l1_lowflow = lowmask*i_error_low
+        error_low += w*(l1_lowflow.mean())
 
         #看预测的深度和Pose准不准
         # coords_resi, highmask1 = projective_transform(poses_est[i], disps_est[i], highintrinsics, ii, jj)
@@ -279,9 +280,7 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     abs_high_diff = torch.abs(high_diff)
     squared_diff = high_diff*high_diff
     abs_high_error = torch.mean(abs_high_diff)
-    # abs_high_inv_error = torch.mean(torch.abs((disps - disps_est[-1])[valid_high]))
     abs_re_high_error = torch.mean(abs_high_diff/high_gt)
-    # squared_rel_error_high = torch.mean(squared_diff/high_gt)
     rmse_high = torch.sqrt(torch.mean(squared_diff))
     
     valid_low = (1.0/s_lowdisps < 30.0)*(1.0/s_lowdisps > 0.2)
@@ -291,15 +290,12 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     squared_diff = low_diff*low_diff
     abs_low_error = torch.mean(abs_low_diff[valid_low])
     abs_low_dyna_error = torch.mean(abs_low_diff[valid_dyna])
-    # abs_low_inv_error = torch.mean(torch.abs((lowdisps - low_dispest[-1])[valid_low]))
     abs_re_low_error = torch.mean((abs_low_diff/s_lowdisps)[valid_low])
     # valid_dyna = valid_low*objectmasks[0]
     # error_depth = torch.mean((abs_low_diff/s_lowdisps)[valid_dyna.bool()])
-    # squared_rel_error_low = torch.mean(squared_diff/low_gt)
     rmse_low = torch.sqrt(torch.mean(squared_diff[valid_low]))
 
-    epe_low = (flow_low_list[-1] - lowgtflow).norm(dim=-1)
-    epe_low = epe_low.reshape(-1)[lowmask.reshape(-1) > 0.5]
+    epe_low = l1_lowflow[lowmask[..., 0] > 0.5]
     epe_high = epe_high.reshape(-1)[v.reshape(-1) > 0.5]
 
     metrics = {
@@ -323,11 +319,5 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
         'abs_re_low_error':abs_re_low_error.item(),
 
         'error_depth': error_depth.item(),
-
-        # 'squared_rel_error_high':squared_rel_error_high.item(),
-        # 'squared_rel_error_low':squared_rel_error_low.item(),
-
-        # 'abs_low_inv_error':abs_low_inv_error.item(),
-        # 'abs_high_inv_error':abs_high_inv_error.item(),
     }
     return error_low, error_high, error_dyna, weighted_error_depth, metrics

@@ -64,10 +64,13 @@ class RGBDDataset(data.Dataset):
         self.dataset_index = []
         for scene in self.scene_info:
             if not self.__class__.is_test_scene(scene):
-                graph = self.scene_info[scene]['graph']
-                for i in graph:
-                    if len(graph[i][0]) > 0:
-                        self.dataset_index.append((scene, i))
+                objectinfo = self.scene_info[scene]['object']
+                trackid = random.sample(objectinfo.keys(), 1)[0]  # 随机一个字典中的key，第二个参数为限制个数
+                objectgraph = objectinfo[trackid][3]
+                # graph = self.scene_info[scene]['graph']
+                for i in objectgraph:
+                    if len(objectgraph[i][0]) > 0:
+                        self.dataset_index.append((scene, i, trackid))
             else:
                 print("Reserving {} for validation".format(scene))
 
@@ -175,36 +178,96 @@ class RGBDDataset(data.Dataset):
 
         return graph
 
+    def build_object_frame_graph(self, poses, depths, intrinsics, object, f=8, max_flow=256):
+        """ compute optical flow distance between all pairs of frames """
+        def read_disp(fn):
+            depth = self.__class__.vkittidepth_read(fn)
+            depth[depth < 0.01] = np.mean(depth)
+            return 1.0 / depth
+
+        poses = np.array(poses)
+        intrinsics = np.array(intrinsics) / f
+        
+        disps = np.stack(list(map(read_disp, depths)), 0)
+        d, object = compute_object_distance_matrix_flow(poses, disps, intrinsics, object)
+
+        # uncomment for nice visualization
+        # import matplotlib.pyplot as plt
+        # for i in range(len(d)):
+        #     plt.imshow(d[i])
+        #     plt.show()
+
+        for n, key in enumerate(object.keys()):
+            graph = {}
+            d[n] *= f
+            for i in range(d[n].shape[0]):
+                j, = np.where(d[n][i] < max_flow)
+                graph[i] = (j, d[n][i,j])
+            object[key].append(graph)
+        return object
+
     def __getitem__(self, index):
         """ return training video """
+        scene_id = random.sample(self.scene_info.keys(), 1)[0] 
+        objectinfo = self.scene_info[scene_id]['object']
 
-        index = index % len(self.dataset_index)
-        scene_id, ix = self.dataset_index[index]
+        while(1):
+            trackid = random.sample(objectinfo.keys(), 1)[0]  # 随机一个字典中的key，第二个参数为限制个数
+            objectgraph = objectinfo[trackid][3]
+            # graph = self.scene_info[scene]['graph']
+            dataset_index= []
+            for i in objectgraph:
+                k = (objectgraph[i][1] > self.fmin) & (objectgraph[i][1] < self.fmax)
+                # if len(objectgraph[i][0]) > self.n_frames-2 and k.any():
+                if np.count_nonzero(k) > self.n_frames-2:
+                    dataset_index.append(i)
+            if len(dataset_index) != 0:
+                break
 
-        frame_graph = self.scene_info[scene_id]['graph']
+        index = index % len(dataset_index)
+        ix = dataset_index[index]
+
+        # frame_graph = self.scene_info[scene_id]['graph']
         images_list = self.scene_info[scene_id]['images']
         depths_list = self.scene_info[scene_id]['depths']
-        objectmasks_list = self.scene_info[scene_id]['objectmasks']
         poses_list = self.scene_info[scene_id]['poses']
         intrinsics_list = self.scene_info[scene_id]['intrinsics']
+        sampledmasks_list = self.scene_info[scene_id]['objectmasks']
 
-        # inds = [ ix ]
+        frameidx_list =objectinfo[trackid][0]
+        objectposes_list = objectinfo[trackid][1]
+        objectmasks_list = objectinfo[trackid][2]
+
+        inds = [ ix ]
         # while len(inds) < self.n_frames:
             # get other frames within flow threshold
+        k = (objectgraph[ix][1] > self.fmin) & (objectgraph[ix][1] < self.fmax)
+        frames = objectgraph[ix][0][k]
 
-        n_all = len(self.dataset_index)
-        step = 2
-        half = (self.n_frames//2)*step
-        if half<=ix<=n_all-half:
-            inds = np.arange(ix - half, ix +half,step)
-        elif ix<20:
-            inds = np.arange(ix, ix + half*2,step)
-        else:
-            inds= np.arange(ix - half*2, ix,step)
+        if len(frames[frames > ix]) > self.n_frames -1:
+            inds = np.random.choice(frames[frames > ix], self.n_frames -1)
         
-        inds =np.sort(inds)
-        # k = (frame_graph[ix][1] > self.fmin) & (frame_graph[ix][1] < self.fmax)
-        # frames = frame_graph[ix][0][k]
+        elif np.count_nonzero(frames):
+            inds = np.random.choice(frames, self.n_frames -1)
+        
+        inds = np.sort(np.append(ix, inds))
+
+            # print('ix is {}'.format(ix))
+            # print(['inds are {}'.format(inds)])
+            # if np.isin(ix, inds) == False:
+            # inds += [ ix ]
+
+        # n_all = len(self.dataset_index)
+        # step = 2
+        # half = (self.n_frames//2)*step
+        # if half<=ix<=n_all-half:
+        #     inds = np.arange(ix - half, ix +half,step)
+        # elif ix<20:
+        #     inds = np.arange(ix, ix + half*2,step)
+        # else:
+        #     inds= np.arange(ix - half*2, ix,step)
+        
+        # inds =np.sort(inds)
 
         # while(1):
         #     if len(frames) < self.n_frames-1:
@@ -216,44 +279,54 @@ class RGBDDataset(data.Dataset):
         #     if (len(np.unique(inds)) == len(inds)):
         #         break
         
-            # prefer frames forward in time
-            # if np.count_nonzero(frames[frames > ix]):
-            #     ix = np.random.choice(frames[frames > ix])
+        #     # prefer frames forward in time
+        #     # if np.count_nonzero(frames[frames > ix]):
+        #     #     ix = np.random.choice(frames[frames > ix])
             
-            # elif np.count_nonzero(frames):
-            #     ix = np.random.choice(frames)
+        #     # elif np.count_nonzero(frames):
+        #     #     ix = np.random.choice(frames)
 
-            # print('ix is {}'.format(ix))
-            # print(['inds are {}'.format(inds)])
-            # if np.isin(ix, inds) == False:
-            #     inds += [ ix ]
-
-        # for i in range(1, self.n_frames):
-        #     inds.append(ix + 5*i)
+        #     # print('ix is {}'.format(ix))
+        #     # print(['inds are {}'.format(inds)])
+        #     # if np.isin(ix, inds) == False:
+        #     #     inds += [ ix ]
 
         #读取mask并确定要追踪的车的id
-        images, depths, poses, intrinsics, objectmasks, sampledmasks = [], [], [], [], [], []
+        images, depths, poses, intrinsics, objectmasks, objectposes, sampledmasks = [], [], [], [], [], [], []
         for i in inds:
-            images.append(self.__class__.image_read(images_list[i]))
-            depths.append(self.__class__.depth_read(depths_list[i]))
-            poses.append(poses_list[i])
-            intrinsics.append(intrinsics_list[i])
-            objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[0])
-            sampledmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[1])
+            images.append(self.__class__.image_read(images_list[frameidx_list[i]]))
+            depths.append(self.__class__.vkittidepth_read(depths_list[frameidx_list[i]]))
+            poses.append(poses_list[frameidx_list[i]])
+            intrinsics.append(intrinsics_list[frameidx_list[i]])
+
+            objectmasks.append(objectmasks_list[i])
+            objectposes.append(objectposes_list[i])
+
+            # objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[0])
+            sampledmasks.append(self.__class__.objectmask_read(sampledmasks_list[frameidx_list[i]])[0])
 
         images = np.stack(images).astype(np.float32)
         depths = np.stack(depths).astype(np.float32)
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
+
         objectmasks = np.stack(objectmasks).astype(np.float32)
+        objectposes = np.stack(objectposes).astype(np.float32)
+
         sampledmasks = np.stack(sampledmasks).astype(np.float32)
+
+        # for n, idx in enumerate(inds):
+        #     vis_image = images[n].copy()
+        #     vis_image[np.isin(sampledmasks[n], trackid+1)] = np.array([255.0,255.0,255.0])
+        #     cv2.imwrite('./result/object/mask'+ str(n)+'_' + str(frameidx_list[idx])+'.png', vis_image)
 
         images = torch.from_numpy(images)
         N, h0, w0 = images.shape[:3]
 
         depths = torch.from_numpy(depths)
         poses = torch.from_numpy(poses)
-        objectmasks = torch.from_numpy(objectmasks)
+        objectmasks = torch.from_numpy(objectmasks)[None]
+        objectposes = torch.from_numpy(objectposes)[None]
         sampledmasks = torch.from_numpy(sampledmasks)
         intrinsics = torch.from_numpy(intrinsics)
         intrinsics[:, 0:2] *= ((self.w1//self.scale)/ w0)
@@ -263,44 +336,47 @@ class RGBDDataset(data.Dataset):
         #     images, objectmasks, poses, disps, intrinsics = \
         #             self.aug(images, objectmasks, poses, disps, intrinsics)
 
-        TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)#
+        # TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)#
 
         # objectmasks = torch.nn.functional.interpolate(objectmasks[:, None].double(), size = (self.h1//self.cropscale, self.w1//self.cropscale), mode= 'bicubic').int().squeeze(1)#5,375,1242 ->5,120,404
         # corner, rec = self.cornerinfo(sampledmasks, TRACKID)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].clone()
-        #     vis_image[torch.isin(objectmasks[n], TRACKID+1)] = torch.tensor([255.0,255.0,255.0])
-        #     cv2.imwrite('./visualize/mask'+str(idx)+'.png', np.array(vis_image))
+        #     vis_image[torch.isin(objectmasks[n], trackid+1)] = torch.tensor([255.0,255.0,255.0])
+        #     cv2.imwrite('./result/object/mask'+str(frameidx_list[idx])+'.png', vis_image.numpy())
 
         images = images.permute(0, 3, 1, 2)
         images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1), mode = 'bilinear')
 
-        if TRACKID != -2:
-            objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)
-        else: 
-            objectposes = torch.zeros(1,self.n_frames,7, dtype = poses.dtype)
-            objectposes[...,-1] = 1.0
+        # if TRACKID != -2:
+        #     objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)
+        # else: 
+        #     objectposes = torch.zeros(1,self.n_frames,7, dtype = poses.dtype)
+        #     objectposes[...,-1] = 1.0
 
-        quanmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1, self.w1)).squeeze(1)
-        quanmask = self.construct_objectmask(TRACKID, quanmask)
+        quanmask = torch.nn.functional.interpolate(sampledmasks[:, None], size = (self.h1, self.w1)).squeeze(1)
+        highmask = torch.where(quanmask == (trackid+1.0), 1.0, 0.0)[None]
+        # quanmask = self.construct_objectmask(trackid, quanmask)
 
         # vis_image = images.permute(0,2,3,1).int()
         # vis_image[quanmask[0]>0] = torch.tensor([255,255,255], dtype = torch.int)
         # for i in range(vis_image.shape[0]):
         #     cv2.imwrite('./result/object/mask_{}.png'.format(i),vis_image[i].numpy())
 
-        fullmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
+        # fullmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
 
         # cropmasks = crop(fullmasks[..., None], corner, rec).squeeze(-1)#7,5,99,217
         
-        B = len(TRACKID)
-        objectmasks = fullmasks.view(B*N, -1, self.h1//self.cropscale, self.w1//self.cropscale)#35,1,120,404
-        objectmasks = torch.nn.functional.interpolate(objectmasks, size = (self.h1//self.scale, self.w1//self.scale))#35,1,120,404 ->35,1,30,101
-        objectmasks = objectmasks.view(B, N, self.h1//self.scale, self.w1//self.scale)#7,5,30,101
+        # B = len(TRACKID)
+        # objectmasks = fullmasks.view(B*N, -1, self.h1//self.cropscale, self.w1//self.cropscale)#35,1,120,404
+        # objectmasks = torch.nn.functional.interpolate(objectmasks, size = (self.h1//self.scale, self.w1//self.scale))#35,1,120,404 ->35,1,30,101
+        # objectmasks = objectmasks.view(B, N, self.h1//self.scale, self.w1//self.scale)#7,5,30,101
 
         sampleddepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1, self.w1))#5,375,1242 ->5,240,808
         disps = 1.0/sampleddepths.squeeze(1)
+        # max_depth = (1/disps).max()
+        # depth_vis(disps,'gt', max_depth)
 
         # cropdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.cropscale, self.w1//self.cropscale))#5,1,375,1242 ->5,1,120,404
         # fulldepths = 1.0/cropdepths.squeeze(1)
@@ -313,19 +389,19 @@ class RGBDDataset(data.Dataset):
         #     cropdisps[:] = -0.1
             
         # batchgrid = batch_grid(corner, rec)
-        
+        Apperance = [torch.arange(self.n_frames)]
         trackinfo = {
-            'trackid': TRACKID.to('cuda'),
+            'trackid': torch.tensor([trackid]).to('cuda'),
             'apperance': [x.to('cuda') for x in Apperance],
-            'n_app': N_app,
-            'frames': inds,
+            # 'n_app': N_app,
+            'frames': frameidx_list[inds],
             # 'corner': corner.to('cuda'),
             # 'rec': rec.to('cuda'),
             # 'grid': tuple(t.to('cuda') for t in batchgrid)
         }
 
         # scale scened
-        objectdistance = (sampleddepths.squeeze(1))[(quanmask.int())[0]>0.0]
+        # objectdistance = (sampleddepths.squeeze(1))[(quanmask.int())[0]>0.0]
         # meandistance = objectdistance.mean()
         # print('real scale mean depth is {}'.format(meandistance))
 
@@ -339,7 +415,7 @@ class RGBDDataset(data.Dataset):
             poses[...,:3] *= s
             objectposes[...,:3] *= s
 
-        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), quanmask.to('cuda'), intrinsics.to('cuda'), trackinfo, objectdistance, s.to('cuda')
+        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), highmask.to('cuda'), intrinsics.to('cuda'), trackinfo, s.to('cuda')
 
     def __len__(self):
         return len(self.dataset_index)
@@ -347,3 +423,9 @@ class RGBDDataset(data.Dataset):
     def __imul__(self, x):
         self.dataset_index *= x
         return self
+
+def depth_vis(disps, mode, max_depth):
+    depth = 100*((((1.0/disps).clamp(max=max_depth)) * (655.35/max_depth)).cpu().detach().numpy())
+
+    for i in range(disps.shape[0]):
+        cv2.imwrite('./result/depth/depth' + mode +'_{}.png'.format(i),depth[i].astype(np.uint16))

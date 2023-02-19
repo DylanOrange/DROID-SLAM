@@ -170,6 +170,20 @@ def induced_flow(poses, disps, intrinsics, ii, jj):
 
     return coords1[...,:2] - coords0, valid
 
+def induced_object_flow(poses, disps, intrinsics, objectposes, objectmasks, ii, jj):
+    """ optical flow induced by camera motion """
+
+    ht, wd = disps.shape[2:]
+    y, x = torch.meshgrid(
+        torch.arange(ht).to(disps.device).float(),
+        torch.arange(wd).to(disps.device).float())
+
+    validmask = torch.ones(len(ii), device = objectmasks.device)
+    coords0 = torch.stack([x, y], dim=-1)
+    coords1, valid = dyprojective_transform(poses, disps, intrinsics, ii, jj, validmask, objectposes, objectmasks)
+
+    return coords1[...,:2] - coords0, valid
+
 def dyactp(Gij, X0, Gijobject = None, objectmask = None, fullmask  = None, jacobian = False, batch = False):
     """ action on point cloud """
     #X0: 1,12,30,101,4
@@ -219,7 +233,7 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
     Gij = poses[:, jj] * poses[:, ii].inv()
     # print(Gij.data)
     Gij.data[:, ii == jj] = torch.as_tensor(
-        [-0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device)
+        [-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device)
 
     validobjectmask = objectmask[:, ii]*validmask[..., None, None]#2,12,30,101
     # objectmask = objectmask[:, ii]#2,12,30,101
@@ -227,7 +241,7 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
     Gijobject =  poses[:, jj] * objectposes[:, jj].inv() * objectposes[:, ii] * poses[:, ii].inv()#2,12,1
     Gjj = poses[:, jj] * objectposes[:, jj].inv()#2,12,1
     Gijobject.data[:, ii == jj] = torch.as_tensor(
-        [-0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device) 
+        [-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device) 
 
     #X1, with object X2, without object
     X1, J1 = dyactp(Gij, X0, Gijobject = Gijobject, objectmask = validobjectmask, fullmask = fullmask, jacobian = Jacobian, batch = batch)
