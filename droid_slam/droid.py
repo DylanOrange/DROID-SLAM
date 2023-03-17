@@ -12,6 +12,14 @@ from trajectory_filler import PoseTrajectoryFiller
 from collections import OrderedDict
 from torch.multiprocessing import Process
 
+import evo
+from evo.core.trajectory import PoseTrajectory3D
+from evo.core.trajectory import PosePath3D
+from evo.tools import file_interface
+from evo.core import sync
+import evo.main_ape as main_ape
+from evo.core.metrics import PoseRelation
+
 
 class Droid:
     def __init__(self, args):
@@ -84,6 +92,50 @@ class Droid:
         print("#" * 32)
         self.backend(12)
 
+        #求解w2c, 返回c2w
         camera_trajectory = self.traj_filler(stream)
         return camera_trajectory.inv().data.cpu().numpy()
+
+    def evaluate(self):
+
+        pred_pose = self.video.poses.cpu()
+        gt_pose = self.video.posegt.cpu()
+        counter = self.video.counter.value
+        timestamp = self.video.tstamp[:counter].long().cpu()
+
+        gt_objectpose = self.video.objectgt[:counter].cpu()
+        pred_objectpose = self.video.objectposes[:counter].cpu()
+
+        traj_est = PosePath3D(positions_xyz=pred_pose[:counter, :3],orientations_quat_wxyz=pred_pose[:counter, [6,3,4,5]])
+        traj_ref = PosePath3D(positions_xyz=gt_pose[:counter, :3],orientations_quat_wxyz=gt_pose[:counter, [6,3,4,5]])
+
+        obtraj_est_dict = {}
+        obtraj_ref_dict = {}
+
+        for n, id in enumerate(self.trackID):           
+            
+            object_timestamp = torch.as_tensor(list(self.objectposegt[id].keys()))
+
+            keyob_timestamp = torch.as_tensor(np.intersect1d(object_timestamp, timestamp))
+
+            gtidx = torch.isin(timestamp, keyob_timestamp)
+
+            obtraj_est_dict[id] = PosePath3D(
+                positions_xyz=pred_objectpose[gtidx, n, :3],
+                orientations_quat_wxyz=pred_objectpose[gtidx][:,n, [6,3,4,5]])
+            obtraj_ref_dict[id] = PosePath3D(
+                positions_xyz=gt_objectpose[gtidx, n, :3],
+                orientations_quat_wxyz=gt_objectpose[gtidx][:,n, [6,3,4,5]])
+
+        result = main_ape.ape(traj_ref, traj_est, est_name='traj',
+                            pose_relation=PoseRelation.translation_part, align=True, correct_scale=True) #input c2w
+        print('---camera pose----')
+        print(result)
+    
+        print('---object pose---')
+        for id in self.trackID:
+            result = main_ape.ape(obtraj_ref_dict[id], obtraj_est_dict[id], est_name='traj',
+                                pose_relation=PoseRelation.translation_part, align=True, correct_scale=True) # input o2w
+            print('------------result for car id ' + str(id)+'-----------')
+            print(result)
 

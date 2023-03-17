@@ -154,5 +154,7 @@ cache
 *.o
 data
 figures/*.pdf
-
+*.png
+*.npy
+copy
 

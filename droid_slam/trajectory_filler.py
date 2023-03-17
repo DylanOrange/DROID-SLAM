@@ -87,7 +87,7 @@ class PoseTrajectoryFiller:
         images = []
         intrinsics = []
         
-        for (tstamp, image, intrinsic) in image_stream:
+        for (tstamp, image, objectmask, instance_mask, intrinsic, posegt, objectposegt, dispgt) in image_stream:
             tstamps.append(tstamp)
             images.append(image)
             intrinsics.append(intrinsic)
