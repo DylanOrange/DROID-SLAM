@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name="12_2_objectgraph"
+#SBATCH --job-name="12_2_objectgraph_biglr"
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:1,VRAM:24G

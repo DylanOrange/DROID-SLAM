@@ -43,7 +43,7 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True, object = False, track
         for n in range(len(trackinfo['trackid'][0])):
             validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
         validmask = torch.stack(validmasklist, dim=0)
-        dP = dP[validmask]
+        dP = dP[validmask][None]
 
     n = len(Gs)
     geodesic_loss = 0.0
@@ -53,7 +53,7 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True, object = False, track
         w = gamma ** (n - i - 1)
         dG = Gs[i][:,jj] * Gs[i][:,ii].inv()
         if object == True:
-            dG = dG[validmask]
+            dG = dG[validmask][None]
 
         if do_scale:
             s = fit_scale(dP, dG)
@@ -99,6 +99,26 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True, object = False, track
         #     # print(Gs[0].data)
 
     return geodesic_loss, metrics
+
+def smooth_loss(Gs, gamma=0.9):
+    """ Loss function for training network """
+
+    n = len(Gs)
+    sum_smooth_loss = 0.0
+    N = Gs[0].shape[1]
+    for i in range(n):
+        smooth_loss = 0.0
+        dG = []
+        w = gamma ** (n - i - 1)
+        for j in range(N-1):
+            dG.append(Gs[i][:,j] * Gs[i][:,j+1].inv())
+        for k in range(N-2):
+            tau, phi = (dG[k]*dG[k+1].inv()).log().split([3,3], dim=-1)
+            smooth_loss += w * (tau.norm(dim=-1) + phi.norm(dim=-1))
+        sum_smooth_loss += smooth_loss/(N-2)
+
+    metrics = {'smooth_loss': sum_smooth_loss.item()} 
+    return sum_smooth_loss, metrics
 
 
 def residual_loss(residuals, gamma=0.9):
@@ -190,7 +210,7 @@ def residual_loss(residuals, gamma=0.9):
 
 #     return error_low, error_high, error_st, metrics
 
-def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_dispest, scale, gamma=0.9):
+def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_dispest, scale, gamma=0.9):
     """ optical flow loss """
 
     ii, jj, kk = graph_to_edge_list(graph)
@@ -200,7 +220,7 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
         validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
     validmask = torch.stack(validmasklist, dim=0)
 
-    lowdisps = disps[:,:,3::8,3::8].clone()
+    # lowdisps = disps.clone()
 
     highintrinsics = intrinsics.clone()
     highintrinsics[...,:] *= 8
@@ -208,11 +228,11 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     # lowgtflow, lowmask = projective_transform(Ps, lowdisps, intrinsics, ii, jj)
     # highgtflow, highmask = projective_transform(Ps, disps, highintrinsics, ii, jj)
 
-    lowgtflow, lowmask = dyprojective_transform(Ps, lowdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks[0])
-    highgtflow, highmask = dyprojective_transform(Ps, disps, highintrinsics, ii, jj, validmask, ObjectPs, quanmask[0])
+    lowgtflow, lowmask = dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks[0])
+    highgtflow, highmask = dyprojective_transform(Ps, highdisps, highintrinsics, ii, jj, validmask, ObjectPs, quanmask[0])
 
-    lowmask = lowmask * (lowdisps[:,ii] > 0).float().unsqueeze(dim=-1)
-    highmask = highmask * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
+    lowmask = lowmask * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
+    highmask = highmask * (highdisps[:,ii] > 0).float().unsqueeze(dim=-1)
 
     n = len(poses_est)
     error_low = 0
@@ -220,8 +240,8 @@ def flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, object
     error_high = 0
     weighted_error_depth = 0
 
-    s_disps = disps*scale
-    s_lowdisps = lowdisps* scale
+    s_disps = highdisps*scale
+    s_lowdisps = disps* scale
 
     valid_dyna = (1.0/s_lowdisps < 30.0)*(1.0/s_lowdisps > 0.2)*(objectmasks[0]>0)
     dymask = objectmasks[0,:,ii]

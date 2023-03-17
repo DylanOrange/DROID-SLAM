@@ -236,9 +236,11 @@ class FactorGraph:
             target = target.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
             weight = weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
 
-            # dense bundle adjustment
             self.video.ba(target, weight, damping, ii, jj, t0, t1, 
                 itrs=itrs, lm=1e-4, ep=0.1, motion_only=motion_only)
+
+            # self.video.dynamicba(target, weight, damping, ii, jj, t0, t1,
+            #               itrs=itrs, lm=1e-4, ep=1e-2, motion_only=motion_only)
         
             if self.upsample:
                 self.video.upsample(torch.unique(self.ii), upmask)
@@ -289,9 +291,11 @@ class FactorGraph:
             target = self.target.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
             weight = self.weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
 
-            # dense bundle adjustment
             self.video.ba(target, weight, damping, self.ii, self.jj, 1, t, 
                 itrs=itrs, lm=1e-5, ep=1e-2, motion_only=False)
+
+            # self.video.dynamicba(self.target, self.weight, damping, self.ii, self.jj, 1, t,
+            #               itrs=itrs, lm=1e-4, ep=1e-2, motion_only=False)
 
             self.video.dirty[:t] = True
 

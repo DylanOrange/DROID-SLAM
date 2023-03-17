@@ -229,7 +229,7 @@ class DroidNet(nn.Module):
 
         ii = ii.to(device=images.device, dtype=torch.long)
         jj = jj.to(device=images.device, dtype=torch.long)
-
+        
         fmaps, net, inp = self.extract_features(images)
         net, inp = net[:,ii], inp[:,ii]
         corr_fn = CorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=4, radius=3)

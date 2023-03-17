@@ -176,11 +176,17 @@ class VKitti2(RGBDDataset):
         #                    cv2.IMREAD_ANYDEPTH) / (VKitti2.DEPTH_SCALE*100)
         # resize(mask.resize((101,30)), (101,30), interpolation = cv2.INTER_NEAREST)
         depth = Image.open(depth_file)                
-        depth = np.array(depth.resize((101,30), Image.NEAREST)) / (VKitti2.DEPTH_SCALE*100)
-        depth[depth == np.nan] = 1.0
-        depth[depth == np.inf] = 1.0
-        depth[depth == 0] = 1.0
-        return depth
+        depthlow = np.array(depth.resize((101,30), Image.NEAREST)) / (VKitti2.DEPTH_SCALE*100)
+        depthlow[depthlow == np.nan] = 1.0
+        depthlow[depthlow == np.inf] = 1.0
+        depthlow[depthlow == 0] = 1.0
+
+        depthhigh = np.array(depth.resize((808,240), Image.NEAREST)) / (VKitti2.DEPTH_SCALE*100)
+        depthhigh[depthhigh == np.nan] = 1.0
+        depthhigh[depthhigh == np.inf] = 1.0
+        depthhigh[depthhigh == 0] = 1.0
+
+        return depthlow, depthhigh
 
     @staticmethod
     def flow_read(flow_file):

@@ -77,7 +77,7 @@ def train(args):
         model = load_weights(model, args.ckpt)
 
     # fetch dataloader
-    db = dataset_factory(['vkitti2'], datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax)
+    db = dataset_factory(['vkitti2'], datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
 
     # train_sampler = torch.utils.data.distributed.DistributedSampler(
     #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
@@ -98,7 +98,7 @@ def train(args):
 
             optimizer.zero_grad()
 
-            images, poses, objectposes, objectmasks, disps, quanmask, intrinsics, trackinfo, scale = item
+            images, poses, objectposes, objectmasks, disps, highdisps, quanmask, intrinsics, trackinfo, scale = item
 
             # if objectdistance.mean() > 20.0 or trackinfo['trackid'] == -2:
             #     continue
@@ -106,7 +106,7 @@ def train(args):
             #     continue
             # convert poses w2c -> c2w
             Ps = SE3(poses)#这里暂时使用w2c
-            ObjectPs = SE3(objectposes[0]).inv()
+            ObjectPs = SE3(objectposes[0]).inv()#物体从o2w到w2o
             
             Gs = SE3.IdentityLike(Ps)
             ObjectGs = SE3.IdentityLike(ObjectPs)
@@ -126,31 +126,35 @@ def train(args):
             for n in range(len(trackinfo['trackid'][0])):
                 ObjectGs.data[n, trackinfo['apperance'][n][0][0]] = ObjectPs.data[n, trackinfo['apperance'][n][0][0]].clone()
                 ObjectGs.data[n, trackinfo['apperance'][n][0][1:]] = ObjectPs.data[n, trackinfo['apperance'][n][0][1]].clone()
-            disp0 = torch.ones_like(disps[:,:,3::8,3::8])
+            disp0 = torch.ones_like(disps)
             # disp0 = disps[:,:,3::8,3::8]
             # perform random restarts
-
             r = 0
             while r < args.restart_prob:
                 r = rng.random()
                 skipstep = False
                 
                 # intrinsics0 = intrinsics / 8.0
-                poses_est, objectposes_est, disps_est,  static_residual_list, flow_low_list, low_disp_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps[:,:,3::8,3::8], intrinsics, trackinfo,
+                poses_est, objectposes_est, disps_est,  static_residual_list, flow_low_list, low_disp_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps, intrinsics, trackinfo,
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
+                # smooth_loss, smooth_metrics = losses.smooth_loss(poses_est)
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
                 static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
                 # dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list)
-                error_low, error_high, error_dyna, error_depth, flow_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list, scale)
+                error_low, error_high, error_dyna, error_depth, flow_metrics = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list, scale)
 
-                loss =  args.w1*geo_loss  + + args.w1*Obgeo_loss + args.w2 * static_resi_loss  + args.w3 * error_high  + args.w3 * error_low + 10*args.w3 * error_depth + 10*args.w3 * error_dyna
+                #0.05,  0.25,   2.5,  40,  5,  0.09,  1.5
+                #10,  10,  0.1,  0.005,  0.05, 5, 0.5
+                #0.5,  2.5,  0.25,  0.2,  0.25, 0.45, 0.75
+                loss =  args.w1*geo_loss + args.w1*Obgeo_loss + args.w2 * static_resi_loss  +  args.w3 * error_high  + args.w3 * error_low + 10*args.w3 * error_depth + 10*args.w3 * error_dyna
                 loss.backward()
 
                 Gs = poses_est[-1].detach()
                 ObjectGs = objectposes_est[-1].detach()
-                disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+                # disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+                disp0 = low_disp_list[-1].detach()
 
                 if total_steps > 12000:
                     if flow_metrics['abs_low_dyna_error'] > 1.5*flow_metrics['abs_low_error'] and Obgeo_metrics['ob_rot_error'] > 0.5:
@@ -163,7 +167,7 @@ def train(args):
             metrics.update(geo_metrics)
             metrics.update(Obgeo_metrics)
             metrics.update(static_resid_metrics)
-            # metrics.update(dyna_resid_metrics)
+            # metrics.update(smooth_metrics)
             metrics.update(flow_metrics)
             loss = {
                 'geo_loss':geo_loss.item(),
@@ -199,7 +203,7 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='12_2_objectgraph', help='name your experiment')
+    parser.add_argument('--name', default='12_2_objectgraph_biglr', help='name your experiment')
     # parser.add_argument('--ckpt', help='checkpoint to restore',default='./checkpoints/30*101_15_2_objectflow_008000.pth')
     parser.add_argument('--ckpt', help='checkpoint to restore',default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
@@ -209,7 +213,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=12)
     parser.add_argument('--steps', type=int, default=80000)
-    parser.add_argument('--lr', type=float, default=0.00025)
+    parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=6)
 
@@ -218,7 +222,9 @@ if __name__ == '__main__':
     parser.add_argument('--w3', type=float, default=0.05)
 
     parser.add_argument('--fmin', type=float, default=8.0)
-    parser.add_argument('--fmax', type=float, default=120.0)
+    parser.add_argument('--fmax', type=float, default=96.0)
+    parser.add_argument('--obfmin', type=float, default=5.0)
+    parser.add_argument('--obfmax', type=float, default=15.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')
     parser.add_argument('--edges', type=int, default=24)

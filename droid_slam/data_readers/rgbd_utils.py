@@ -161,7 +161,7 @@ def compute_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
         max = objectdepths.amax((1,2))
 
         #如何评价遮挡
-        valid = (min > 2.0) * (max < 30.0) * (mean < 20.0)
+        valid = (min > 2.0) * (max < 30.0)
 
         #如果剩下的车不到五帧，就放弃这辆车
         if len(valid[valid>0])<5:
@@ -191,18 +191,19 @@ def compute_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
 
         s = (N*N)//10
         for i in range(0, ii.shape[0], s):
+            #trackid = 6, 66帧有明显的边界
             flow1, val1 = pops.induced_object_flow(poses, disps, intrinsics, objectposes, objectmasks, ii[i:i+s], jj[i:i+s])
             flow2, val2 = pops.induced_object_flow(poses, disps, intrinsics, objectposes, objectmasks, jj[i:i+s], ii[i:i+s])
 
-            # flow1st, _ = pops.induced_flow(poses, disps, intrinsics, ii[i:i+s], jj[i:i+s])
-            # flow2st, _ = pops.induced_flow(poses, disps, intrinsics, jj[i:i+s], ii[i:i+s])
+            flow1st, _ = pops.induced_flow(poses, disps, intrinsics, ii[i:i+s], jj[i:i+s])
+            flow2st, _ = pops.induced_flow(poses, disps, intrinsics, jj[i:i+s], ii[i:i+s])
 
             # ii_test = ii[i:i+s]
             # staticmask = 1 - objectmasks[:, ii_test]
             # sta1 = flow1*staticmask[..., None]
             # sta2 = flow1st*staticmask[..., None]
            
-            flow = torch.stack([flow1, flow2], dim=2)
+            flow = torch.stack([flow1-flow1st, flow2-flow2st], dim=2)
             val = torch.stack([val1, val2], dim=2)
             mask = torch.stack([objectmasks[:, ii[i:i+s]], objectmasks[:, jj[i:i+s]]], dim=2)
             
