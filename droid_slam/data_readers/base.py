@@ -16,6 +16,7 @@ import random
 import json
 import pickle
 import os.path as osp
+import random
 
 from .augmentation import RGBDAugmentor
 from .rgbd_utils import *
@@ -25,11 +26,11 @@ from geom.projective_ops import coords_grid, crop, batch_grid
 NCAR = 135
 
 class RGBDDataset(data.Dataset):
-    def __init__(self, name, datapath, n_frames=4, crop_size=[384,512], fmin=8.0, fmax=75.0, obfmin=8.0, obfmax=75.0, do_aug=True):
+    def __init__(self, name, split_mode, datapath, n_frames=4, crop_size=[384,512], fmin=8.0, fmax=75.0, obfmin=8.0, obfmax=75.0, do_aug=True):
         """ Base class for RGBD dataset """
         self.aug = None
         self.root = datapath
-        self.name = name
+        self.name = name+'-'+split_mode
 
         self.n_frames = n_frames
         self.fmin = fmin # exclude very easy examples
@@ -68,16 +69,18 @@ class RGBDDataset(data.Dataset):
     def _build_dataset_index(self):
         self.dataset_index = []
         for scene in self.scene_info:
-            if not self.__class__.is_test_scene(scene):
-                objectinfo = self.scene_info[scene]['object']
-                for id in self.alltrackid:
-                    objectgraph = objectinfo[id][3]
-                    for i in objectgraph:
-                        k = (objectgraph[i][1] > self.obfmin) & (objectgraph[i][1] < self.obfmax)
-                        if k.any():
-                            self.dataset_index.append((id, i))
-            else:
-                print("Reserving {} for validation".format(scene))
+            # if not self.__class__.is_test_scene(scene):
+            # dataset_index = []
+            objectinfo = self.scene_info[scene]['object']
+            for id in self.alltrackid:
+                objectgraph = objectinfo[id][3]
+                for i in objectgraph:
+                    k = (objectgraph[i][1] > self.obfmin) & (objectgraph[i][1] < self.obfmax)
+                    if k.any():
+                        self.dataset_index.append((scene, id, i))
+            # self.dataset_index[scene] = dataset_index
+            # else:
+            #     print("Reserving {} for validation".format(scene))
 
     @staticmethod
     def image_read(image_file):
@@ -194,7 +197,7 @@ class RGBDDataset(data.Dataset):
         intrinsics = np.array(intrinsics) / f
         
         disps = np.stack(list(map(read_disp, depths)), 0)
-        d, object = compute_object_distance_matrix_flow(poses, disps, intrinsics, object)
+        d, object = prepare_object_distance_matrix_flow(poses, disps, intrinsics, object)
 
         # uncomment for nice visualization
         # import matplotlib.pyplot as plt
@@ -213,9 +216,9 @@ class RGBDDataset(data.Dataset):
 
     def __getitem__(self, index):
         """ return training video """
-        # scene_id = random.sample(self.scene_info.keys(), 1)[0] 
-        scene_id  = self.root
-        objectinfo = self.scene_info[scene_id]['object']
+        # scene_id = random.sample(self.dataset_index.keys(), 1)[0] 
+        # scene_id  = self.root
+        # objectinfo = self.scene_info[scene_id]['object']
         # trackid = random.sample(self.alltrackid, 1)[0]
         # while(1):
         #     trackid = random.sample(self.alltrackid, 1)[0]  # 随机一个字典中的key，第二个参数为限制个数
@@ -228,8 +231,11 @@ class RGBDDataset(data.Dataset):
         #                 dataset_index.append(i)
         #     if len(dataset_index) > self.n_frames-2:
         #         break
+        # index = random.randint(0,len(self.dataset_index[scene_id])-1)
+        # print('generated index is {}'.format(index))
         index = index % len(self.dataset_index)
-        trackid, ix = self.dataset_index[index]
+        scene_id, trackid, ix = self.dataset_index[index]
+        objectinfo = self.scene_info[scene_id]['object']
         objectgraph = objectinfo[trackid][3]
 
         # frame_graph = self.scene_info[scene_id]['graph']
@@ -259,6 +265,7 @@ class RGBDDataset(data.Dataset):
 
         inds = np.array(inds)
 
+        # print('scene is {}'.format(scene_id))
         # print('trackid is {}'.format(trackid))
         # print('object graph is {}'.format(inds))
         # for i in range(len(inds)-1):
@@ -343,9 +350,6 @@ class RGBDDataset(data.Dataset):
         intrinsics[:, 0:2] *= ((self.w1//self.scale)/ w0)
         intrinsics[:, 2:4] *= ((self.h1//self.scale)/ h0)
 
-        # if self.aug is not None:
-        #     images, objectmasks, poses, disps, intrinsics = \
-        #             self.aug(images, objectmasks, poses, disps, intrinsics)
 
         # TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)#
 
@@ -354,6 +358,11 @@ class RGBDDataset(data.Dataset):
 
         images = images.permute(0, 3, 1, 2)
         images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1), mode = 'bilinear')
+
+        if self.aug is not None:
+            # images, objectmasks, poses, disps, intrinsics = \
+            #         self.aug(images, objectmasks, poses, disps, intrinsics)
+            images = self.aug(images)
 
         # if TRACKID != -2:
         #     objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)

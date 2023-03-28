@@ -38,7 +38,7 @@ class DroidFrontend:
 
         print('frontend update')
         self.count += 1#update的次数
-        self.t1 += 1#总是等于上次更新时的关键帧数量，总是滞后一帧
+        self.t1 += 1
 
         if self.graph.corr is not None:
             self.graph.rm_factors(self.graph.age > self.max_age, store=True)#去掉更新次数超过25次的

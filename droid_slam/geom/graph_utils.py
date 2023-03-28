@@ -4,7 +4,7 @@ import numpy as np
 from collections import OrderedDict
 
 import lietorch
-from data_readers.rgbd_utils import compute_distance_matrix_flow, compute_distance_matrix_flow2
+from data_readers.rgbd_utils import compute_distance_matrix_flow, compute_distance_matrix_flow2, compute_object_distance_matrix_flow
 
 
 def graph_to_edge_list(graph):
@@ -41,6 +41,39 @@ def build_frame_graph(poses, disps, intrinsics, num=16, thresh=24.0, r=2):
     disps = disps[0][:,3::8,3::8].cpu().numpy()
     intrinsics = intrinsics[0].cpu().numpy() / 8.0
     d = compute_distance_matrix_flow(poses, disps, intrinsics)
+
+    count = 0
+    graph = OrderedDict()
+    
+    for i in range(N):
+        graph[i] = []
+        d[i,i] = np.inf
+        for j in range(i-r, i+r+1):
+            if 0 <= j < N and i != j:
+                graph[i].append(j)
+                d[i,j] = np.inf
+                count += 1
+
+    while count < num:
+        ix = np.argmin(d)
+        i, j = ix // N, ix % N
+
+        if d[i,j] < thresh:
+            graph[i].append(j)
+            d[i,j] = np.inf
+            count += 1
+        else:
+            break
+    
+    return graph
+
+def build_object_frame_graph(poses, disps, intrinsics, num=16, thresh=24.0, r=2):
+    """ construct a frame graph between co-visible frames """
+    N = poses.shape[1]
+    poses = poses[0].cpu().numpy()
+    disps = disps[0][:,3::8,3::8].cpu().numpy()
+    intrinsics = intrinsics[0].cpu().numpy() / 8.0
+    d = compute_object_distance_matrix_flow(poses, disps, intrinsics)
 
     count = 0
     graph = OrderedDict()

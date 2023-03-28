@@ -76,6 +76,8 @@ class PoseTrajectoryFiller:
         self.video[N:N+M] = (tt, images[:,0], Gs.data, 1, None, intrinsics / 8.0, fmap ,None, None, objectmasks, posegt, objectposegt, dispgt, ObGs.data)
 
         graph = FactorGraph(self.video, self.update)
+        print('traj filter add ii {}'.format(t0))
+        print('traj filter add jj {}'.format(torch.arange(N, N+M)))
         graph.add_factors(t0.to(self.device), torch.arange(N, N+M).to(self.device))#插帧用的关键帧和新加进来的帧连接起来
         graph.add_factors(t1.to(self.device), torch.arange(N, N+M).to(self.device))
 

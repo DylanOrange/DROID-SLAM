@@ -32,8 +32,7 @@ class CholeskySolver(torch.autograd.Function):
 def block_solve(H, b, ep=0.0001, lm=0.0001):
     """ solve normal equations """
     B, N, _, D, _ = H.shape
-    H = H.permute(0,1,3,2,4)
-    H = H.reshape(B, N*D, N*D)
+    H = H.permute(0,1,3,2,4).reshape(B, N*D, N*D)
 
     I = torch.eye(N*D).to(H.device)
     H = H + (ep + lm*H) * I

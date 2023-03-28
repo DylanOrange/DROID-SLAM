@@ -238,10 +238,12 @@ class DroidNet(nn.Module):
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
         # coords_crop = pops.coords_grid(ht//2, wd//2, device=images.device)
         
-        validmasklist = []
-        for n in range(len(trackinfo['trackid'][0])):
-            validmasklist.append(torch.isin(ii, trackinfo['apperance'][n][0]) & torch.isin(jj, trackinfo['apperance'][n][0]))
-        validmask = torch.stack(validmasklist, dim=0)
+        # validmasklist = []
+        # for n in range(len(trackinfo['trackid'][0])):
+        #     validmasklist.append(torch.isin(ii, trackinfo['apperance'][n][0]) & torch.isin(jj, trackinfo['apperance'][n][0]))
+        # validmask = torch.stack(validmasklist, dim=0)
+
+        validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
         #NOTE: 先用低分辨率试一试
         coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
@@ -305,7 +307,7 @@ class DroidNet(nn.Module):
 
             for i in range(2):
                 # Gs, disps, valid = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
-                Gs, ObjectGs, disps, valid = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
             coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             # coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)

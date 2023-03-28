@@ -1,6 +1,6 @@
 from time import time
 import torch
-import lietorch
+from lietorch import SE3
 import numpy as np
 
 from droid_net import DroidNet
@@ -101,23 +101,28 @@ class Droid:
 
         camera_trajectory, object_trajectory = self.traj_filler(stream)
         if need_inv:
-            return camera_trajectory.data.cpu().numpy(), object_trajectory.data.cpu().numpy(), 
+            return camera_trajectory.inv().data.cpu().numpy(), object_trajectory.inv().data.cpu().numpy(), 
         else:
             # for vkitti2(already w2c)
             return camera_trajectory.data.cpu().numpy(), object_trajectory.data.cpu().numpy(), 
     
     def evaluate(self):
 
-        pred_pose = self.video.poses.cpu()
-        gt_pose = self.video.posegt.cpu()
+        pred_pose = SE3(self.video.poses).inv().data.cpu()#w2c->c2w
+        gt_pose = self.video.posegt.cpu()#已经转换为c2w
         counter = self.video.counter.value
         timestamp = self.video.tstamp[:counter].long().cpu()
 
-        gt_objectpose = self.video.objectgt[:counter].cpu()
-        pred_objectpose = self.video.objectposes[:counter].cpu()
+        gt_objectpose = self.video.objectgt[:counter].cpu()#已经是o2w
+        pred_objectpose = SE3(self.video.objectposes[:counter]).inv().data.cpu()#w2o->o2w
 
         traj_est = PosePath3D(positions_xyz=pred_pose[:counter, :3],orientations_quat_wxyz=pred_pose[:counter, [6,3,4,5]])
         traj_ref = PosePath3D(positions_xyz=gt_pose[:counter, :3],orientations_quat_wxyz=gt_pose[:counter, [6,3,4,5]])
+
+        result = main_ape.ape(traj_ref, traj_est, est_name='traj',
+                            pose_relation=PoseRelation.translation_part, align=True, correct_scale=True) #input c2w
+        print('---camera pose----')
+        print(result)
 
         obtraj_est_dict = {}
         obtraj_ref_dict = {}
@@ -128,7 +133,8 @@ class Droid:
 
             keyob_timestamp = torch.as_tensor(np.intersect1d(object_timestamp, timestamp))
 
-            gtidx = torch.isin(timestamp, keyob_timestamp)
+            gtidx = torch.isin(timestamp, object_timestamp)
+            print(torch.equal(gtidx,torch.isin(timestamp, keyob_timestamp)))
 
             obtraj_est_dict[id] = PosePath3D(
                 positions_xyz=pred_objectpose[gtidx, n, :3],
@@ -136,11 +142,6 @@ class Droid:
             obtraj_ref_dict[id] = PosePath3D(
                 positions_xyz=gt_objectpose[gtidx, n, :3],
                 orientations_quat_wxyz=gt_objectpose[gtidx][:,n, [6,3,4,5]])
-
-        result = main_ape.ape(traj_ref, traj_est, est_name='traj',
-                            pose_relation=PoseRelation.translation_part, align=True, correct_scale=True) #input c2w
-        print('---camera pose----')
-        print(result)
     
         print('---object pose---')
         for id in self.trackID:

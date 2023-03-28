@@ -57,6 +57,7 @@ class RGBDAugmentor:
         images = 255 * self.augcolor(images[[2,1,0]] / 255.0)
         return images[[2,1,0]].reshape(ch, ht, wd, num).permute(3,0,1,2).contiguous()
 
-    def __call__(self, images, objectmasks, poses, depths, intrinsics):
+    def __call__(self, images):
         images = self.color_transform(images)
-        return self.spatial_transform(images, objectmasks, depths, poses, intrinsics)
+        # return self.spatial_transform(images, objectmasks, depths, poses, intrinsics)
+        return images

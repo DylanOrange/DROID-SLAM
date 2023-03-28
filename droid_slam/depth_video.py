@@ -212,45 +212,44 @@ class DepthVideo:
             self.poses[:self.counter.value, :3] *= s
             self.dirty[:self.counter.value] = True
 
-    # def reproject(self, ii, jj):
-    #     """ project points from ii -> jj """
-
-    #     ii, jj = DepthVideo.format_indicies(ii, jj, self.device)
-    #     Gs = lietorch.SE3(self.poses[None]) 
-    #     ObjectGs = lietorch.SE3(self.objectposes.transpose(1,0)) 
-    #     objectmasks = self.objectmask.transpose(1,0)
-
-    #     validmasklist = []
-    #     for n, id in enumerate(self.trackID):
-    #         if id in self.objectgraph.keys():
-    #             object_app = torch.as_tensor(self.objectgraph[id], device=ii.device)
-    #             ii_stamp = self.tstamp[ii]
-    #             jj_stamp = self.tstamp[jj]
-    #             validmask = (torch.isin(ii_stamp, object_app) & torch.isin(jj_stamp, object_app))
-
-    #         else:
-    #             validmask = torch.zeros_like(ii,dtype=torch.bool)
-
-    #         validmasklist.append(validmask)
-
-    #     validmask = torch.stack(validmasklist, dim=0)
-
-
-    #     coords, valid_mask = \
-    #         pops.dyprojective_transform(
-    #             Gs, self.disps[None], self.intrinsics[None], ii, jj, validmask, ObjectGs, objectmasks)
-
-    #     return coords, valid_mask
-
     def reproject(self, ii, jj):
         """ project points from ii -> jj """
+
         ii, jj = DepthVideo.format_indicies(ii, jj, self.device)
-        Gs = lietorch.SE3(self.poses[None])
+        Gs = lietorch.SE3(self.poses[None]) 
+        ObjectGs = lietorch.SE3(self.objectposes.transpose(1,0)) 
+        objectmasks = self.objectmask.transpose(1,0)
+
+        validmasklist = []
+        for n, id in enumerate(self.trackID):
+            if id in self.objectgraph.keys():
+                object_app = torch.as_tensor(self.objectgraph[id], device=ii.device)
+                ii_stamp = self.tstamp[ii]
+                jj_stamp = self.tstamp[jj]
+                validmask = (torch.isin(ii_stamp, object_app) & torch.isin(jj_stamp, object_app))
+
+            else:
+                validmask = torch.zeros_like(ii,dtype=torch.bool)
+
+            validmasklist.append(validmask)
+
+        validmask = torch.stack(validmasklist, dim=0)
 
         coords, valid_mask = \
-            pops.projective_transform(Gs, self.disps[None], self.intrinsics[None], ii, jj)
+            pops.dyprojective_transform(
+                Gs, self.disps[None], self.intrinsics[None], ii, jj, validmask, ObjectGs, objectmasks)
 
         return coords, valid_mask
+
+    # def reproject(self, ii, jj):
+    #     """ project points from ii -> jj """
+    #     ii, jj = DepthVideo.format_indicies(ii, jj, self.device)
+    #     Gs = lietorch.SE3(self.poses[None])
+
+    #     coords, valid_mask = \
+    #         pops.projective_transform(Gs, self.disps[None], self.intrinsics[None], ii, jj)
+
+    #     return coords, valid_mask
     
     def getgtflow(self, ii, jj, validmask):
         """ project points from ii -> jj """
@@ -323,19 +322,20 @@ class DepthVideo:
 
         validmasklist = []
         app = {}
+        # print('current window is {}'.format(self.tstamp[min:max+1]))
         for n, id in enumerate(self.trackID):
             if id in self.objectgraph.keys():
+                # TODO:这里在最后traj-filter只会优化object-app里的，即插帧插出来的无法优化
                 object_app = torch.as_tensor(self.objectgraph[id], device=ii.device)
                 ii_stamp = self.tstamp[ii]
                 jj_stamp = self.tstamp[jj]
                 validmask = (torch.isin(ii_stamp, object_app) & torch.isin(jj_stamp, object_app))
-
                 app[n] = torch.arange(max+1-min, device=min.device)[torch.isin(self.tstamp[min:max+1], object_app)]
 
             else:
                 validmask = torch.zeros_like(ii,dtype=torch.bool)
-                app[n] = torch.arange(max+1-min,device=min.device)
-
+                app[n] = torch.arange(0,device=min.device)
+            # print('object in this window apps in {}'.format(app[n]))
             validmasklist.append(validmask)
 
         validmask = torch.stack(validmasklist, dim=0)
@@ -345,12 +345,16 @@ class DepthVideo:
         jj = jj - min
         t0 = t0 - min
 
-        if (motion_only == False):
-            self.poses[min:max+1], objectpose, self.disps[min:max+1] = ba.dynamicBA(target, weight, objectposes, objectmask,  app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=t0)
-            self.objectposes[min:max+1] = objectpose.permute(1,0,2)
-        else:
-            self.poses[min:max+1], objectpose = ba.dynamicmoBA(target, weight, eta, objectposes, objectmask, poses, disps, intrinsics, ii, jj, fixedp=t0, rig=1)
-            self.objectposes[min:max+1] = objectpose.permute(1,0,2)
+        for i in range(itrs):
+            if (motion_only == False):
+               poses, objectposes, disps= ba.dynamictestBA(target, weight, objectposes, objectmask,  app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=t0)
+            else:
+                poses, objectposes, disps = ba.dynamictestmoBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=t0)
+        
+        self.poses[min:max+1] = poses.data
+        self.objectposes[min:max+1] = objectposes.data.transpose(1,0)
+        self.disps[min:max+1] = disps
+
 
 def vis(mask, index):
     h, w = mask.shape

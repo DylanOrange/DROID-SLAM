@@ -39,10 +39,11 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True, object = False, track
     dP = Ps[:,jj] * Ps[:,ii].inv()
 
     if object == True:
-        validmasklist = []
-        for n in range(len(trackinfo['trackid'][0])):
-            validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
-        validmask = torch.stack(validmasklist, dim=0)
+        # validmasklist = []
+        # for n in range(len(trackinfo['trackid'][0])):
+        #     validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
+        # validmask = torch.stack(validmasklist, dim=0)
+        validmask = torch.ones_like(ii,dtype=torch.bool, device='cuda')[None]
         dP = dP[validmask][None]
 
     n = len(Gs)
@@ -215,10 +216,12 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
 
     ii, jj, kk = graph_to_edge_list(graph)
 
-    validmasklist = []
-    for n in range(len(trackinfo['trackid'][0])):
-        validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
-    validmask = torch.stack(validmasklist, dim=0)
+    # validmasklist = []
+    # for n in range(len(trackinfo['trackid'][0])):
+    #     validmasklist.append(torch.isin(ii.to('cuda'), trackinfo['apperance'][n][0]) & torch.isin(jj.to('cuda'), trackinfo['apperance'][n][0]))
+    # validmask = torch.stack(validmasklist, dim=0)
+
+    validmask = torch.ones_like(ii, dtype=torch.bool, device='cuda')[None]
 
     # lowdisps = disps.clone()
 

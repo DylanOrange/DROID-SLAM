@@ -34,15 +34,15 @@ def read_vkitti2_poses_file(file_path) -> PosePath3D:
     mat = np.array(raw_mat).astype(float)
     # mat = mat[:framenumber]
 
-    # poses = [np.linalg.inv(np.array([[r[0], r[1], r[2], r[3]],
-    #                                  [r[4], r[5], r[6], r[7]],
-    #                                  [r[8], r[9], r[10], r[11]],
-    #                                  [r[12], r[13], r[14], r[15]]])) for r in mat]
+    poses = [np.linalg.inv(np.array([[r[0], r[1], r[2], r[3]],
+                                     [r[4], r[5], r[6], r[7]],
+                                     [r[8], r[9], r[10], r[11]],
+                                     [r[12], r[13], r[14], r[15]]])) for r in mat]
     
-    poses = [np.array([[r[0], r[1], r[2], r[3]],
-                                [r[4], r[5], r[6], r[7]],
-                                [r[8], r[9], r[10], r[11]],
-                                [r[12], r[13], r[14], r[15]]]) for r in mat]
+    # poses = [np.array([[r[0], r[1], r[2], r[3]],
+    #                             [r[4], r[5], r[6], r[7]],
+    #                             [r[8], r[9], r[10], r[11]],
+    #                             [r[12], r[13], r[14], r[15]]]) for r in mat]
     return poses
 
 def rmat_to_quad(mat):
@@ -86,11 +86,11 @@ def objectposes_read(file_path, trackID):
     poses = np.concatenate((raw_pose[:, 0:3], rotation.as_quat()), axis=1)
     o2w = torch.as_tensor(poses, dtype=torch.double)
 
-    o2w = SE3(o2w)
-    w2o = o2w.inv().data
+    # o2w = SE3(o2w)
+    # w2o = o2w.inv().data
 
     for i, index in enumerate(idx):
-        objectpose[int(index)] = w2o[i]
+        objectpose[int(index)] = o2w[i]
 
     return objectpose
 
@@ -101,7 +101,11 @@ def pose_read(file_path):
     t = poses[:, :3, 3] 
     poses = torch.as_tensor(np.concatenate((t, r), axis=1), dtype=torch.double)
 
-    return poses
+    #比较要用c2w
+    w2c = SE3(poses)
+    c2w = w2c.inv().data
+
+    return c2w
 
 def image_stream(datapath, trackID, image_size=[240, 808], mode='val'):
     """ image generator """
@@ -129,7 +133,7 @@ def image_stream(datapath, trackID, image_size=[240, 808], mode='val'):
 
     # objectpose_path = os.path.join(datapath, split[mode], 'pose.txt')
 
-    for t, imfile in enumerate(images_list[:100]):
+    for t, imfile in enumerate(images_list):
         #read image
         image = cv2.imread(imfile)
         h0, w0, _ = image.shape
@@ -158,15 +162,21 @@ def image_stream(datapath, trackID, image_size=[240, 808], mode='val'):
         instance_mask = torch.from_numpy(maskarray)
         objectmask_list = []
         objectpose_list = []
-        for id in trackID:
-            objectmask = np.where((maskarray == (id+1)), 1, 0)
-            objectmask_list.append(torch.as_tensor(objectmask))
-            if torch.isin(t, torch.tensor(list(objectpose_dict[id].keys()))):
-                objectpose_list.append(objectpose_dict[id][t])
-            else:
-                objectpose_list.append(Id)
-        objectmasks = torch.stack(objectmask_list, dim = 0)#2,30,101
-        objectpose_gt = torch.stack(objectpose_list, dim = 0)#2,7
+
+        if not trackID:
+                objectmasks = torch.zeros(1,h1//8,w1//8)
+                objectpose_gt = Id[None]
+        
+        else:
+            for id in trackID:
+                objectmask = np.where((maskarray == (id+1)), 1, 0)
+                objectmask_list.append(torch.as_tensor(objectmask))
+                if torch.isin(t, torch.tensor(list(objectpose_dict[id].keys()))):
+                    objectpose_list.append(objectpose_dict[id][t])
+                else:
+                    objectpose_list.append(Id)
+            objectmasks = torch.stack(objectmask_list, dim = 0)#2,30,101
+            objectpose_gt = torch.stack(objectpose_list, dim = 0)#2,7
 
         #instance segementation mask
 
@@ -186,8 +196,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--datapath", default = '../DeFlowSLAM/datasets/vkitti2/Scene20')
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--weights", default="droid.pth")
-    parser.add_argument("--buffer", type=int, default=400)
+    parser.add_argument("--weights", default="checkpoints/12_2_objectgraph_smconsobflow_oldconf_032000.pth")
+    parser.add_argument("--buffer", type=int, default=1000)
     parser.add_argument("--image_size", default=[240, 808])
     parser.add_argument("--disable_vis", action="store_true", default= True)
     parser.add_argument("--beta", type=float, default=0.6)
@@ -203,11 +213,14 @@ if __name__ == '__main__':
     parser.add_argument("--backend_radius", type=int, default=2)
     parser.add_argument("--backend_nms", type=int, default=3)
     parser.add_argument("--framenumber", type=int, default=100)
-    parser.add_argument("--trackID", type=int, default=[7])
+    parser.add_argument("--trackID", type=int, default=[0,1,3])
+    parser.add_argument("--disable_object", type=int, default=False)
     args = parser.parse_args()
 
     # os.environ["CUDA_VISIBLE_DEVICES"] = args.device.split(':')[-1]
     args.stereo = False
+    if args.disable_object == True:
+        args.trackID = []
     torch.multiprocessing.set_start_method('spawn')
 
     print("Running evaluation on {}".format(args.datapath))
@@ -226,7 +239,7 @@ if __name__ == '__main__':
     pose_path = os.path.join(args.datapath, '15-deg-left', 'extrinsic.txt')
     poses_gt = pose_read(pose_path)
 
-    traj_ref = read_vkitti2_poses_file(os.path.join(args.datapath, '15-deg-left/extrinsic.txt'))
+    # traj_ref = read_vkitti2_poses_file(os.path.join(args.datapath, '15-deg-left/extrinsic.txt'))
 
     droid.objectposegt = objectpose_dict
     # droid.posegt = traj_ref
@@ -247,18 +260,20 @@ if __name__ == '__main__':
         positions_xyz=traj_est[:, :3],
         orientations_quat_wxyz=traj_est[:, [6,3,4,5]])
 
-    traj_ref = PosePath3D(poses_se3=traj_ref)
+    traj_ref = PosePath3D(
+        positions_xyz=poses_gt[:, :3].numpy(),
+        orientations_quat_wxyz=poses_gt[:, [6,3,4,5]].numpy())
     
-    obtraj_est_dict = {}
-    obtraj_ref_dict = {}
-    for n, id in enumerate(args.trackID):
-        exist = objectpose_dict[id].shape[0]
-        obtraj_est_dict[id] = PosePath3D(
-            positions_xyz=obtraj_est[:exist, n, :3],
-            orientations_quat_wxyz=obtraj_est[:exist, n, [6,3,4,5]])
-        obtraj_ref_dict[id] = PosePath3D(
-            positions_xyz=objectpose_dict[id][:,:3],
-            orientations_quat_wxyz=objectpose_dict[id][:,[6,3,4,5]])
+    # obtraj_est_dict = {}
+    # obtraj_ref_dict = {}
+    # for n, id in enumerate(args.trackID):
+    #     exist = objectpose_dict[id].shape[0]
+    #     obtraj_est_dict[id] = PosePath3D(
+    #         positions_xyz=obtraj_est[:exist, n, :3],
+    #         orientations_quat_wxyz=obtraj_est[:exist, n, [6,3,4,5]])
+    #     obtraj_ref_dict[id] = PosePath3D(
+    #         positions_xyz=objectpose_dict[id][:,:3],
+    #         orientations_quat_wxyz=objectpose_dict[id][:,[6,3,4,5]])
 
     # est_file = './result/joint/cam_est.txt'
     # gt_file = './result/joint/cam_ref.txt'
@@ -279,13 +294,9 @@ if __name__ == '__main__':
     print('---camera pose----')
     print(result)
     
-    print('---object pose---')
-    for id in args.trackID:
-        # print(obtraj_est_dict[id].positions_xyz[:5])
-        # print(obtraj_est_dict[id].orientations_quat_wxyz[:5])
-        # print(obtraj_ref_dict[id].positions_xyz[:5])
-        # print(obtraj_ref_dict[id].orientations_quat_wxyz[:5])
-        result = main_ape.ape(obtraj_ref_dict[id], obtraj_est_dict[id], est_name='traj',
-                            pose_relation=PoseRelation.translation_part, align=True, correct_scale=True) # input o2w
-        print('------------result for car id ' + str(id)+'-----------')
-        print(result)
+    # print('---object pose---')
+    # for id in args.trackID:
+    #     result = main_ape.ape(obtraj_ref_dict[id], obtraj_est_dict[id], est_name='traj',
+    #                         pose_relation=PoseRelation.translation_part, align=True, correct_scale=True) # input o2w
+    #     print('------------result for car id ' + str(id)+'-----------')
+    #     print(result)

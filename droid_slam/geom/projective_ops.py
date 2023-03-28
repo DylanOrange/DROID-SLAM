@@ -274,6 +274,7 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
         else:
             Jci = torch.sum(Jcoi*validobjectmask[..., None, None], dim=0, keepdim=True) + Jci*(1-fullmask[..., None, None])
             Jz = torch.sum((Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None], dim = 0, keepdim=True) + (Gij[:, :, None, None] * Jz) * (1 - fullmask[..., None])
+            # Jz = torch.cat(((Gij[:, :, None, None] * Jz) * (1 - fullmask[..., None]), (Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None]), dim=0)
 
         Jz = torch.matmul(Jp1, Jz.unsqueeze(-1))
 

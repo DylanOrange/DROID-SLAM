@@ -30,15 +30,16 @@ class VKitti2(RGBDDataset):
     # scale depths to balance rot & trans
     DEPTH_SCALE = 1.0
     split = {
-        'train': '15-deg-left',
-        'val': 'clone',
-        'test': '30-deg-right'
+        'train': ('15-deg-left','15-deg-right','30-deg-left'),
+        'val': ('clone'),
+        'test': ('30-deg-right')
     }
+    scene = ['Scene18']
 
     def __init__(self, split_mode='train', **kwargs):
         self.split_mode = split_mode
         self.n_frames = 2
-        super(VKitti2, self).__init__(name='VKitti2', **kwargs)
+        super(VKitti2, self).__init__(name='VKitti2', split_mode = 'train', **kwargs)
 
     @staticmethod
     def is_test_scene(scene):
@@ -51,54 +52,58 @@ class VKitti2(RGBDDataset):
 
         scene_info = {}
         # scenes = glob.glob(osp.join(self.root, '*'))
-        scenes = glob.glob(self.root)
-        for scene in tqdm(sorted(scenes)):
-            images = sorted(
-                glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/rgb/Camera_0/*.jpg')))
-            depths = sorted(
-                glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/depth/Camera_0/*.png')))
-            objectmasks = sorted(
-                glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/instanceSegmentation/Camera_0/*.png')))
-            # 注意camera pose的选择
+        # scenes = glob.glob(self.root)
+        # scenes = osp.join(self.root, )
+        for scene in VKitti2.scene:
+            for split in VKitti2.split[self.split_mode]:
+                images = sorted(
+                    glob.glob(osp.join(self.root, scene, split, 'frames/rgb/Camera_0/*.jpg')))
+                depths = sorted(
+                    glob.glob(osp.join(self.root, scene, split, 'frames/depth/Camera_0/*.png')))
+                instancemasks = sorted(
+                    glob.glob(osp.join(self.root, scene, split, 'frames/instanceSegmentation/Camera_0/*.png')))
+                # 注意camera pose的选择
 
-            objectposepath = osp.join(scene, VKitti2.split[self.split_mode], 'pose.txt')
-            poses = np.loadtxt(
-                osp.join(scene, VKitti2.split[self.split_mode], 'extrinsic.txt'), delimiter=' ', skiprows=1)[::2, 2:]
-            poses = poses.reshape(-1, 4, 4)
-            r = rmat_to_quad(poses[:, 0:3, 0:3])
-            t = poses[:, :3, 3] / VKitti2.DEPTH_SCALE
-            poses = np.concatenate((t, r), axis=1)
-            # translation + Quaternion
-            with open(osp.join(scene, VKitti2.split[self.split_mode], 'info.txt')) as f:
-                objectid = [int(line.split()[0]) for line in f.readlines()[1:]]
-            
-            object = self.object_read(objectposepath, objectid, objectmasks)
+                objectposepath = osp.join(self.root, scene, split, 'pose.txt')
 
-            intrinsics = [VKitti2.calib_read()] * len(images)
-            scene = '/'.join(scene.split('/'))
+                poses = np.loadtxt(
+                    osp.join(self.root, scene, split, 'extrinsic.txt'), delimiter=' ', skiprows=1)[::2, 2:]
+                poses = poses.reshape(-1, 4, 4)
+                r = rmat_to_quad(poses[:, 0:3, 0:3])
+                t = poses[:, :3, 3] / VKitti2.DEPTH_SCALE
+                poses = np.concatenate((t, r), axis=1)#w2c
 
-            # graph of co-visible frames based on flow
-            # if self.aug_graph:
-            #     graph = self.build_frame_graph(poses, depths, intrinsics)
-            # else:
-            #     graph = None
+                # translation + Quaternion
+                with open(osp.join(self.root, scene, split, 'info.txt')) as f:
+                    objectid = [int(line.split()[0]) for line in f.readlines()[1:]]
+                
+                object = self.object_read(objectposepath, objectid, instancemasks)#index, poses, objectmask at 1/8 resolution
 
-            graph = self.build_frame_graph(poses, depths, intrinsics)
+                intrinsics = [VKitti2.calib_read()] * len(images)
+                # scene = '/'.join(scene.split('/'))
 
-            objectinfo = self.build_object_frame_graph(poses, depths, intrinsics, object)
+                # graph of co-visible frames based on flow
+                # if self.aug_graph:
+                #     graph = self.build_frame_graph(poses, depths, intrinsics)
+                # else:
+                #     graph = None
 
-            # if self.flow_label:
-            #     fo_flows = sorted(
-            #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/forwardFlow/Camera_0/*.png')))
-            #     ba_flows = sorted(
-            #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/backwardFlow/Camera_0/*.png')))
-            #     scene_info[scene] = {'images': images, 'depths': depths, 'fo_flows': fo_flows,
-            #                          'ba_flows': ba_flows, 'poses': poses, 'intrinsics': intrinsics, 'graph': graph}
-            # else:
-            #     masks = sorted(
-            #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/dynamicMask/Camera_0/*.npy')))
-            scene_info[scene] = {'images': images, 'depths': depths, 'objectmasks': objectmasks, 
-                                     'poses': poses, 'intrinsics': intrinsics, 'graph': graph, 'object': objectinfo}
+                graph = self.build_frame_graph(poses, depths, intrinsics)
+
+                objectinfo = self.build_object_frame_graph(poses, depths, intrinsics, object)
+
+                # if self.flow_label:
+                #     fo_flows = sorted(
+                #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/forwardFlow/Camera_0/*.png')))
+                #     ba_flows = sorted(
+                #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/backwardFlow/Camera_0/*.png')))
+                #     scene_info[scene] = {'images': images, 'depths': depths, 'fo_flows': fo_flows,
+                #                          'ba_flows': ba_flows, 'poses': poses, 'intrinsics': intrinsics, 'graph': graph}
+                # else:
+                #     masks = sorted(
+                #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/dynamicMask/Camera_0/*.npy')))
+                scene_info[scene+'-'+split] = {'images': images, 'depths': depths, 'objectmasks': instancemasks, 
+                                        'poses': poses, 'intrinsics': intrinsics, 'graph': graph, 'object': objectinfo}
 
         return scene_info
 
@@ -131,7 +136,7 @@ class VKitti2(RGBDDataset):
 
     def object_read(self, datapath, trackid, maskpath):
         object = {}
-        for  id in trackid:
+        for id in trackid:
             raw_mat = np.loadtxt(datapath, dtype = np.float32, delimiter=' ', skiprows=1)
             mask = (raw_mat[:,1] == 0) & (raw_mat[:,2] == id)
             mat = raw_mat[mask]
@@ -159,7 +164,7 @@ class VKitti2(RGBDDataset):
     @staticmethod
     def objectmask_read(mask_file):
         mask = Image.open(mask_file)
-        return np.array(mask), np.array(mask.resize((101,30), Image.NEAREST))
+        return np.array(mask), np.array(mask.resize((101,30), Image.NEAREST)) #1, 1/8
 
     @staticmethod
     def depth_read(depth_file):
@@ -186,7 +191,7 @@ class VKitti2(RGBDDataset):
         depthhigh[depthhigh == np.inf] = 1.0
         depthhigh[depthhigh == 0] = 1.0
 
-        return depthlow, depthhigh
+        return depthlow, depthhigh #1/8, 1
 
     @staticmethod
     def flow_read(flow_file):

@@ -59,14 +59,103 @@ def load_weights(model, weights):
     model.load_state_dict(state_dict, strict = False)
     return model
 
+def step(model, item, mode, logger, skip):
+
+    images, poses, objectposes, objectmasks, disps, highdisps, quanmask, intrinsics, trackinfo, scale = item
+
+    N = disps.shape[1]
+
+    Ps = SE3(poses)#in system we use w2c
+    ObjectPs = SE3(objectposes[0]).inv()#物体从o2w到w2o
+    
+    Gs = SE3.IdentityLike(Ps)
+    ObjectGs = SE3.IdentityLike(ObjectPs)
+
+    graph = OrderedDict()
+    for i in range(N):
+        graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
+
+    # fix first to camera poses
+    Gs.data[:,0] = Ps.data[:,0].clone()
+    Gs.data[:,1:] = Ps.data[:,[1]].clone()
+    # for n in range(len(trackinfo['trackid'][0])):
+    ObjectGs.data[0, trackinfo['apperance'][0][0][0]] = ObjectPs.data[0, trackinfo['apperance'][0][0][0]].clone()
+    ObjectGs.data[0, trackinfo['apperance'][0][0][1:]] = ObjectPs.data[0, trackinfo['apperance'][0][0][1]].clone()
+    disp0 = torch.ones_like(disps)
+
+    r = 0
+    while r < args.restart_prob:
+        r = rng.random()
+
+        if mode == 'val':
+            with torch.no_grad():
+                poses_est, objectposes_est, disps_est,  static_residual_list, flow_low_list, low_disp_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps, intrinsics, trackinfo,
+                    graph, num_steps=args.iters, fixedp=2)
+
+                geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
+                Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
+                static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
+                error_low, error_high, error_dyna, error_depth, flow_metrics = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list, scale)
+
+        else:
+            poses_est, objectposes_est, disps_est,  static_residual_list, flow_low_list, low_disp_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps, intrinsics, trackinfo,
+                graph, num_steps=args.iters, fixedp=2)
+
+            geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
+            Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
+            static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
+            error_low, error_high, error_dyna, error_depth, flow_metrics = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list, scale)
+
+            loss =  args.w1*geo_loss + args.w1*Obgeo_loss + args.w2 * static_resi_loss  +  args.w3 * error_high  + args.w3 * error_low + 10*args.w3 * error_depth + 10*args.w3 * error_dyna
+            loss.backward()
+
+        Gs = poses_est[-1].detach()
+        ObjectGs = objectposes_est[-1].detach()
+        # disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+        disp0 = low_disp_list[-1].detach()
+
+        if skip:
+            if flow_metrics['abs_low_dyna_error'] > 1.5*flow_metrics['abs_low_error'] and Obgeo_metrics['ob_rot_error'] > 0.5:
+                print('bad optimization!')
+                return True
+
+
+    metrics = {}
+    metrics.update(geo_metrics)
+    metrics.update(Obgeo_metrics)
+    metrics.update(static_resid_metrics)
+    metrics.update(flow_metrics)
+    loss = {
+        'geo_loss':geo_loss.item(),
+        'Obgeo_loss':Obgeo_loss.item(),
+        'error_low':error_low.item(),
+        'error_high':error_high.item(), 
+        'error_dyna':error_dyna.item(), 
+        'weighted_error_depth':error_depth.item(), 
+        'static_resi_loss':static_resi_loss.item(),
+    }
+    metrics.update(loss)
+
+    if mode == 'val':
+        val_metrics = {}
+        for key in metrics:
+            newkey = 'val_'+key
+            val_metrics[newkey] = metrics[key]
+        logger.push(val_metrics)
+    
+    else:
+        logger.push(metrics)
+
+    return False
+
+    
 def train(args):
     """ Test to make sure project transform correctly maps points """
 
     # coordinate multiple GPUs
     # setup_ddp(gpu, args)
-    rng = np.random.default_rng(12345)
+    # rng = np.random.default_rng(12345)
 
-    N = args.n_frames
     model = DroidNet()
     model.cuda()
     model.train()
@@ -77,12 +166,13 @@ def train(args):
         model = load_weights(model, args.ckpt)
 
     # fetch dataloader
-    db = dataset_factory(['vkitti2'], datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
-
+    db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
     # train_sampler = torch.utils.data.distributed.DistributedSampler(
     #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
 
     train_loader = DataLoader(db, batch_size=args.batch, shuffle = True)
+    test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -91,94 +181,17 @@ def train(args):
 
     logger = Logger(args.name, scheduler)
     should_keep_training = True
+    skip = False
     total_steps = 0
 
     while should_keep_training:
-        for i_batch, item in enumerate(train_loader):
+        for _, item in enumerate(train_loader):
 
             optimizer.zero_grad()
 
-            images, poses, objectposes, objectmasks, disps, highdisps, quanmask, intrinsics, trackinfo, scale = item
-
-            # if objectdistance.mean() > 20.0 or trackinfo['trackid'] == -2:
-            #     continue
-            # elif objectdistance.min() < 3.0 or objectdistance.max() > 30.0:
-            #     continue
-            # convert poses w2c -> c2w
-            Ps = SE3(poses)#这里暂时使用w2c
-            ObjectPs = SE3(objectposes[0]).inv()#物体从o2w到w2o
-            
-            Gs = SE3.IdentityLike(Ps)
-            ObjectGs = SE3.IdentityLike(ObjectPs)
-
-            # randomize frame graph
-            # if np.random.rand() < 0.5:
-            #     graph = build_frame_graph(poses, disps, intrinsics, num=args.edges)
-            
-            # else:
-            graph = OrderedDict()
-            for i in range(N):
-                graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
-            
-            # fix first to camera poses
-            Gs.data[:,0] = Ps.data[:,0].clone()
-            Gs.data[:,1:] = Ps.data[:,[1]].clone()
-            for n in range(len(trackinfo['trackid'][0])):
-                ObjectGs.data[n, trackinfo['apperance'][n][0][0]] = ObjectPs.data[n, trackinfo['apperance'][n][0][0]].clone()
-                ObjectGs.data[n, trackinfo['apperance'][n][0][1:]] = ObjectPs.data[n, trackinfo['apperance'][n][0][1]].clone()
-            disp0 = torch.ones_like(disps)
-            # disp0 = disps[:,:,3::8,3::8]
-            # perform random restarts
-            r = 0
-            while r < args.restart_prob:
-                r = rng.random()
-                skipstep = False
-                
-                # intrinsics0 = intrinsics / 8.0
-                poses_est, objectposes_est, disps_est,  static_residual_list, flow_low_list, low_disp_list = model(Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disp0, disps, intrinsics, trackinfo,
-                    graph, num_steps=args.iters, fixedp=2)
-
-                geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False, trackinfo = None)
-                # smooth_loss, smooth_metrics = losses.smooth_loss(poses_est)
-                Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True, trackinfo = trackinfo)
-                static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
-                # dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list)
-                error_low, error_high, error_dyna, error_depth, flow_metrics = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, objectmasks, quanmask, trackinfo, intrinsics, graph, flow_low_list, low_disp_list, scale)
-
-                #0.05,  0.25,   2.5,  40,  5,  0.09,  1.5
-                #10,  10,  0.1,  0.005,  0.05, 5, 0.5
-                #0.5,  2.5,  0.25,  0.2,  0.25, 0.45, 0.75
-                loss =  args.w1*geo_loss + args.w1*Obgeo_loss + args.w2 * static_resi_loss  +  args.w3 * error_high  + args.w3 * error_low + 10*args.w3 * error_depth + 10*args.w3 * error_dyna
-                loss.backward()
-
-                Gs = poses_est[-1].detach()
-                ObjectGs = objectposes_est[-1].detach()
-                # disp0 = disps_est[-1][:,:,3::8,3::8].detach()
-                disp0 = low_disp_list[-1].detach()
-
-                if total_steps > 12000:
-                    if flow_metrics['abs_low_dyna_error'] > 1.5*flow_metrics['abs_low_error'] and Obgeo_metrics['ob_rot_error'] > 0.5:
-                        skipstep = True
-
-            if skipstep:
+            if step(model, item, 'train', logger, skip):
+                print('jump train!')
                 continue
-
-            metrics = {}
-            metrics.update(geo_metrics)
-            metrics.update(Obgeo_metrics)
-            metrics.update(static_resid_metrics)
-            # metrics.update(smooth_metrics)
-            metrics.update(flow_metrics)
-            loss = {
-                'geo_loss':geo_loss.item(),
-                'Obgeo_loss':Obgeo_loss.item(),
-                'error_low':error_low.item(),
-                'error_high':error_high.item(), 
-                'error_dyna':error_dyna.item(), 
-                'weighted_error_depth':error_depth.item(), 
-                'static_resi_loss':static_resi_loss.item(),
-            }
-            metrics.update(loss)
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
@@ -186,8 +199,24 @@ def train(args):
             
             total_steps += 1
 
-            # if gpu == 0:
-            logger.push(metrics)
+            if total_steps % 500 == 0:
+                ##validation
+                model.eval()
+                eval_steps = 0
+
+                for _, item in enumerate(test_loader):
+
+                    if step(model, item, 'val', logger, skip):
+                        print('jump val!')
+                        continue
+                    eval_steps += 1
+
+                    if eval_steps == 100:
+                        model.train()
+                        break
+
+            if total_steps>12000:
+                skip = True
 
             if total_steps % 2000 == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
@@ -203,15 +232,15 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='12_2_objectgraph_biglr', help='name your experiment')
+    parser.add_argument('--name', default='largedata', help='name your experiment')
     # parser.add_argument('--ckpt', help='checkpoint to restore',default='./checkpoints/30*101_15_2_objectflow_008000.pth')
     parser.add_argument('--ckpt', help='checkpoint to restore',default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2/Scene18', help="path to dataset directory")
+    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=12)
+    parser.add_argument('--iters', type=int, default=1)
     parser.add_argument('--steps', type=int, default=80000)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=2.5)
@@ -224,7 +253,7 @@ if __name__ == '__main__':
     parser.add_argument('--fmin', type=float, default=8.0)
     parser.add_argument('--fmax', type=float, default=96.0)
     parser.add_argument('--obfmin', type=float, default=5.0)
-    parser.add_argument('--obfmax', type=float, default=15.0)
+    parser.add_argument('--obfmax', type=float, default=30.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')
     parser.add_argument('--edges', type=int, default=24)
@@ -241,6 +270,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.world_size = args.gpus
+    rng = np.random.default_rng(12345)
     train(args)
 
     # os.environ['MASTER_ADDR'] = 'localhost'

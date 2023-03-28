@@ -141,7 +141,7 @@ def compute_distance_matrix_flow(poses, disps, intrinsics):
 
     return matrix
 
-def compute_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
+def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
     """ compute flow magnitude between all pairs of frames """
     object_matrix = []
     intrinsics = torch.from_numpy(intrinsics).float().cuda()[None]
@@ -224,6 +224,47 @@ def compute_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
     for id in invalidid:
         del object[id]
     return object_matrix, object
+
+def compute_object_distance_matrix_flow(poses, disps, intrinsics, objectposes, objectmasks):
+    
+    N = poses.shape[1]
+    
+    ii, jj = torch.meshgrid(torch.arange(N), torch.arange(N))
+    ii = ii.reshape(-1).cuda()
+    jj = jj.reshape(-1).cuda()
+
+    MAX_FLOW = 100.0
+    matrix = np.zeros((N, N), dtype=np.float32)
+
+    s = (N*N)//10
+    for i in range(0, ii.shape[0], s):
+        #trackid = 6, 66帧有明显的边界
+        flow1, val1 = pops.induced_object_flow(poses, disps, intrinsics, objectposes, objectmasks, ii[i:i+s], jj[i:i+s])
+        flow2, val2 = pops.induced_object_flow(poses, disps, intrinsics, objectposes, objectmasks, jj[i:i+s], ii[i:i+s])
+
+        flow1st, _ = pops.induced_flow(poses, disps, intrinsics, ii[i:i+s], jj[i:i+s])
+        flow2st, _ = pops.induced_flow(poses, disps, intrinsics, jj[i:i+s], ii[i:i+s])
+        
+        flow = torch.stack([flow1-flow1st, flow2-flow2st], dim=2)
+        val = torch.stack([val1, val2], dim=2)
+        mask = torch.stack([objectmasks[:, ii[i:i+s]], objectmasks[:, jj[i:i+s]]], dim=2)
+        
+        mag = flow.norm(dim=-1).clamp(max=MAX_FLOW)
+        mag = mag.view(mag.shape[1], -1)
+        val = val.view(val.shape[1], -1)
+        mask = mask.view(mask.shape[1], -1)
+        masksum = mask.sum(-1)
+        validsum =  (val*mask).sum(-1)
+
+        mag = (mag*val*mask).sum(-1) / validsum
+        mag[validsum/masksum < 0.7] = np.inf
+
+        i1 = ii[i:i+s].cpu().numpy()
+        j1 = jj[i:i+s].cpu().numpy()
+        matrix[i1, j1] = mag.cpu().numpy()
+    
+    return matrix
+    
 
 
 def compute_distance_matrix_flow2(poses, disps, intrinsics, beta=0.4):
