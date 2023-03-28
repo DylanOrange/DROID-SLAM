@@ -240,7 +240,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=1)
+    parser.add_argument('--iters', type=int, default=12)
     parser.add_argument('--steps', type=int, default=80000)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=2.5)

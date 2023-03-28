@@ -7,7 +7,7 @@ import droid_backends
 from collections import OrderedDict
 
 from modules.extractor import BasicEncoder
-from modules.corr import CorrBlock
+from modules.corr import CorrBlock, AltCorrBlock
 from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
@@ -217,8 +217,8 @@ class DroidNet(nn.Module):
         """ Estimates SE3 or Sim3 between pair of frames """
         #Ps is ground truth
         objectmasks = objectmasks[0]
-        # corners = trackinfo['corner'][0]
-        # rec = trackinfo['rec'][0]
+        corners = trackinfo['corner'][0]
+        rec = trackinfo['rec'][0]
         # cropmasks = cropmasks[0]
         # cropdisps = cropdisps[0]
         # fullmasks = fullmasks[0]
@@ -229,183 +229,190 @@ class DroidNet(nn.Module):
 
         ii = ii.to(device=images.device, dtype=torch.long)
         jj = jj.to(device=images.device, dtype=torch.long)
-        
-        fmaps, net, inp = self.extract_features(images)
-        net, inp = net[:,ii], inp[:,ii]
-        corr_fn = CorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=4, radius=3)
-
-        ht, wd = images.shape[-2:]
-        coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
-        # coords_crop = pops.coords_grid(ht//2, wd//2, device=images.device)
-        
-        # validmasklist = []
-        # for n in range(len(trackinfo['trackid'][0])):
-        #     validmasklist.append(torch.isin(ii, trackinfo['apperance'][n][0]) & torch.isin(jj, trackinfo['apperance'][n][0]))
-        # validmask = torch.stack(validmasklist, dim=0)
 
         validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
-        #NOTE: 先用低分辨率试一试
-        coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
-        # coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+        for index in range(2):
+            if index == 0:
+                ht, wd = images.shape[-2:]
+                coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
+                coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+                batch_grid = None
+            else:
+                coords0 = pops.coords_grid(rec[0], rec[1], device=images.device)
+                coords1 = cropcoords1.detach()
+                intrinsics[...,:] *= 4
+                batch_grid = trackinfo['grid']
+                
 
-        target = coords1.clone()
+            fmaps, net, inp = self.extract_features(images)
+            net, inp = net[:,ii], inp[:,ii]
+            corr_fn = CorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=3, radius=3)
+            # corr_fn = AltCorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=3, radius=3)
 
-        # # highintrinsics = intrinsics.clone()
-        # # highintrinsics[...,:] *= 4
-        # # objectmasks = torch.zeros_like(objectmasks)
-        # # lowgtflow, lowmask = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
-        # lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
-        # # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
-        # for i in range(lowgtflow.shape[1]):
-        #     gtflow = flow_to_image(lowgtflow[0,i].cpu().numpy(), lowmask[0,i,...,0].cpu().numpy())
-        #     cv2.imwrite('./result/gtflow/gtflow_{}.png'.format(i),gtflow)
+            target = coords1.clone()
 
-        Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, low_disp_list = [], [], [], [], [], []
+            # # highintrinsics = intrinsics.clone()
+            # # highintrinsics[...,:] *= 4
+            # # objectmasks = torch.zeros_like(objectmasks)
+            # # lowgtflow, lowmask = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
+            # lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+            # # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
+            # for i in range(lowgtflow.shape[1]):
+            #     gtflow = flow_to_image(lowgtflow[0,i].cpu().numpy(), lowmask[0,i,...,0].cpu().numpy())
+            #     cv2.imwrite('./result/gtflow/gtflow_{}.png'.format(i),gtflow)
 
-        for step in range(num_steps):
-            Gs = Gs.detach()
-            ObjectGs = ObjectGs.detach()
-            disps = disps.detach()
-            coords1 = coords1.detach()
-            target = target.detach()
+            Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, low_disp_list = [], [], [], [], [], []
 
-            # extract motion features
-            corr = corr_fn(coords1)
-            resd = target - coords1
-            flow = coords1 - coords0
+            for step in range(num_steps):
+                Gs = Gs.detach()
+                ObjectGs = ObjectGs.detach()
+                disps = disps.detach()
+                coords1 = coords1.detach()
+                target = target.detach()
 
-            motion = torch.cat([flow, resd], dim=-1)
-            motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
+                # extract motion features
+                corr = corr_fn(coords1)
+                resd = target - coords1
+                flow = coords1 - coords0
 
-            net, delta, weight, eta, mask_disp = \
-                self.update(net, inp, corr, motion, ii, jj)
+                motion = torch.cat([flow, resd], dim=-1)
+                motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
-            target = coords1 + delta
+                net, delta, weight, eta, mask_disp = \
+                    self.update(net, inp, corr, motion, ii, jj)
 
-            # flow_inter = upsample_flow(target - coords0, mask_flow, 4) + coords_crop
-            # cropweight = upsample_flow(weight, mask_weight,4)
+                target = coords1 + delta
 
-            # flow_inter = highgtflow.clone()
-            # flow_inter = torch.normal(mean=highgtflow, std=1e+0)
+                # flow_inter = upsample_flow(target - coords0, mask_flow, 4) + coords_crop
+                # cropweight = upsample_flow(weight, mask_weight,4)
 
-            # vis_highmask = highmask.squeeze(-1)
-            # vis_fullmask = fullmasks[:, ii]
-            # flow_inter_vis = flow_to_image(flow_inter[0,0].cpu().numpy(), vis_highmask[0,0].cpu().numpy())
-            # dyna_flow_inter_vis = flow_to_image(flow_inter[0,0].cpu().numpy(), vis_fullmask[0,0].cpu().numpy())
-            # cv2.imwrite('flow_inter_{}.png'.format(0),flow_inter_vis)
-            # cv2.imwrite('dyna_flow_inter_{}.png'.format(0),dyna_flow_inter_vis)
+                # flow_inter = highgtflow.clone()
+                # flow_inter = torch.normal(mean=highgtflow, std=1e+0)
 
-            # cropflow = pops.crop(flow_inter.expand(B,-1,-1,-1,-1), corners, rec)
-            # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
-            # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
+                # vis_highmask = highmask.squeeze(-1)
+                # vis_fullmask = fullmasks[:, ii]
+                # flow_inter_vis = flow_to_image(flow_inter[0,0].cpu().numpy(), vis_highmask[0,0].cpu().numpy())
+                # dyna_flow_inter_vis = flow_to_image(flow_inter[0,0].cpu().numpy(), vis_fullmask[0,0].cpu().numpy())
+                # cv2.imwrite('flow_inter_{}.png'.format(0),flow_inter_vis)
+                # cv2.imwrite('dyna_flow_inter_{}.png'.format(0),dyna_flow_inter_vis)
 
-            # weight = lowmask.expand(-1,-1,-1,-1,2)
+                # cropflow = pops.crop(flow_inter.expand(B,-1,-1,-1,-1), corners, rec)
+                # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
 
-            # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
-            # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
+                # weight = lowmask.expand(-1,-1,-1,-1,2)
 
-            for i in range(2):
-                # Gs, disps, valid = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
-                Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
+                # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
 
-            coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
-            # coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
-            # coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
-        
-            # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
-            static_residual = (target - coords1)*valid_static
-            # dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
+                for i in range(2):
+                    Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, batch_grid = batch_grid, fixedp=2)
 
-            Gs_list.append(Gs)
-            ObjectGs_list.append(ObjectGs)
-            disp_list.append(upsample_flow(disps[..., None], mask_disp, 8, True)[...,0])
-            low_disp_list.append(disps)
-            static_residual_list.append(static_residual)
-            # dyna_residual_list.append(dyna_residual[dyna_residual>0])
-            flow_low_list.append(target)
-
-        # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-        # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
-
-        # # # coords1, valid_static = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj ,return_depth = True)
-        # # # thresh = 0.005
-        # # # dj = 1.0/coords1[..., 2]
-        # # # djj = 1.0/gtdisps[:,jj]
-        # # # d01 = torch.zeros_like(dj)
-        # # # d10 = torch.zeros_like(dj)
-        # # # d11 = torch.zeros_like(dj)
-        # # # d01[:,:,:-1,:] = djj[:,:,1:,:]
-        # # # d10[:,:,:,:-1] = djj[:,:,:,1:]
-        # # # d11[:,:,:-1,:-1] = djj[:,:,1:,1:]
-        # # # counter = (((dj - djj)> thresh).float() + ((dj - d01)> thresh).float() + ((dj - d10)> thresh).float() + ((dj - d11)> thresh).float())
-        # # # masks = (counter>=2)
-
-        # # # thresh = 0.005 * torch.ones_like(disps[0].mean(dim=[1,2])).float()
-        # # # dirty_index = torch.tensor([0,1,2,3,4], device = 'cuda')
-        # # # count = droid_backends.depth_filter(Ps[0].data.float(), gtdisps[0].float(), intrinsics[0,0].float(), dirty_index, thresh)
-        # # # masks = ((count>=2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True)))
-
-        # dynaflow = objectmasks[:,ii].long()
-
-        # print('-----------------')
-        # max_depth = (1/gtdisps).max()
-        # depth_vis(gtdisps,'gt', max_depth)
-        # depth_vis(disps,'dy', max_depth)
-        # # depth_vis(gtdisps*masks,'filtered',max_depth)
-
-        # # dynaflow2 = dynaflow.clone()
-        # # dynaflow2[:,:2] = 0.0
-        # diff_flow = (target - lowgtflow)
-        # # diff_flow2 = (target - lowgtflow)[dynaflow2>0.0]
-
-        # error_static_flow = torch.mean(torch.abs(diff_flow))
-        # error_dyna_flow = torch.mean(torch.abs(diff_flow[dynaflow>0.0]))
-
-        # diff_disps = (disps - gtdisps)
-        # error_dyan_depth = torch.mean(torch.abs(diff_disps[objectmasks.long()>0.0]))
-        # error_static_depth = torch.mean(torch.abs(diff_disps))
-
-        # print('static depth error is {}'.format(error_static_depth))
-        # print('dynamic depth error is {}'.format(error_dyan_depth))
-
-        # print('static flow error is {}'.format(error_static_flow))
-        # print('dynamic flow error is {}'.format(error_dyna_flow))
-
-        # # for i in range(target.shape[1]):
-        # #     error_flow = torch.mean(torch.abs(diff_flow[:,i][dynaflow[:,i]>0.0]))
-        # #     print('error of dynamic flow' + str(i) + ' is {}'.format(error_flow))
-
-        # print('overall depth is {}'.format(1.0/torch.mean(gtdisps[objectmasks>0.0])))
-        # print('frames are {}'.format(trackinfo['frames']))
-        # print('trackid is {}'.format(trackinfo['trackid'].item()))
-        # print('loss is {}'.format(loss.item()))
-        # print('r_err is {}'.format(r_err.item()))
-        # print('t_err is {}'.format(t_err.item()))
-
-        # print('ob_loss is {}'.format(ob_loss.item()))
-        # print('ob_r_err is {}'.format(ob_r_err.item()))
-        # print('ob_t_err is {}'.format(ob_t_err.item()))
-
-        # weight_vis = valid[...,0]*weight[...,0]
-        # weight_vis[weight_vis>0.5] = 1.0
-        # for i in range(target.shape[1]):
+                coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks, batch_grid = batch_grid)
+                # coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+                # coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
             
-        #     if torch.count_nonzero(dynaflow[0,i]) != 0:
-        #         gt_dyna_flow = flow_to_image(lowgtflow[0,i].detach().cpu().numpy(), dynaflow[0,i].detach().cpu().numpy())
-        #         cv2.imwrite('./result/gt_dyna_flow/flow_gtdyna_'+ str(step) + '_' + str(i) +'.png', gt_dyna_flow)
+                # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
+                static_residual = (target - coords1)*valid_static
+                # dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
 
-        #         pred_dyna_flow = flow_to_image(target[0,i].detach().cpu().numpy(), dynaflow[0,i].detach().cpu().numpy())
-        #         cv2.imwrite('./result/pred_dyna_flow/flow_preddyna_'+ str(step) + '_' + str(i) +'.png', pred_dyna_flow)
+                Gs_list.append(Gs)
+                ObjectGs_list.append(ObjectGs)
+                disp_list.append(upsample_flow(disps[..., None], mask_disp, 8, True)[...,0])
+                low_disp_list.append(disps)
+                static_residual_list.append(static_residual)
+                # dyna_residual_list.append(dyna_residual[dyna_residual>0])
+                flow_low_list.append(target)
 
-        #     if (weight_vis[0,i].max() == 1.0):
-        #         target_flow = flow_to_image(target[0,i].detach().cpu().numpy(), weight_vis[0,i].detach().cpu().numpy())
-        #         cv2.imwrite('./result/pred_flow/flow_pred_'+ str(step) + '_' + str(i) +'.png', target_flow)
-        
-        # if ob_r_err.item()>0.1:
-        #     print('bad optimization!')
+            images = pops.crop(images, corners, rec)[..., 0]
 
-        return Gs_list, ObjectGs_list, disp_list, static_residual_list, flow_low_list, low_disp_list
+            upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
+            disps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
+
+            upsampled_coords = upsample_flow(disps[..., None], mask_flow, 4, True)
+            coords = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
+
+            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+
+            # # # coords1, valid_static = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj ,return_depth = True)
+            # # # thresh = 0.005
+            # # # dj = 1.0/coords1[..., 2]
+            # # # djj = 1.0/gtdisps[:,jj]
+            # # # d01 = torch.zeros_like(dj)
+            # # # d10 = torch.zeros_like(dj)
+            # # # d11 = torch.zeros_like(dj)
+            # # # d01[:,:,:-1,:] = djj[:,:,1:,:]
+            # # # d10[:,:,:,:-1] = djj[:,:,:,1:]
+            # # # d11[:,:,:-1,:-1] = djj[:,:,1:,1:]
+            # # # counter = (((dj - djj)> thresh).float() + ((dj - d01)> thresh).float() + ((dj - d10)> thresh).float() + ((dj - d11)> thresh).float())
+            # # # masks = (counter>=2)
+
+            # # # thresh = 0.005 * torch.ones_like(disps[0].mean(dim=[1,2])).float()
+            # # # dirty_index = torch.tensor([0,1,2,3,4], device = 'cuda')
+            # # # count = droid_backends.depth_filter(Ps[0].data.float(), gtdisps[0].float(), intrinsics[0,0].float(), dirty_index, thresh)
+            # # # masks = ((count>=2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True)))
+
+            # dynaflow = objectmasks[:,ii].long()
+
+            # print('-----------------')
+            # max_depth = (1/gtdisps).max()
+            # depth_vis(gtdisps,'gt', max_depth)
+            # depth_vis(disps,'dy', max_depth)
+            # # depth_vis(gtdisps*masks,'filtered',max_depth)
+
+            # # dynaflow2 = dynaflow.clone()
+            # # dynaflow2[:,:2] = 0.0
+            # diff_flow = (target - lowgtflow)
+            # # diff_flow2 = (target - lowgtflow)[dynaflow2>0.0]
+
+            # error_static_flow = torch.mean(torch.abs(diff_flow))
+            # error_dyna_flow = torch.mean(torch.abs(diff_flow[dynaflow>0.0]))
+
+            # diff_disps = (disps - gtdisps)
+            # error_dyan_depth = torch.mean(torch.abs(diff_disps[objectmasks.long()>0.0]))
+            # error_static_depth = torch.mean(torch.abs(diff_disps))
+
+            # print('static depth error is {}'.format(error_static_depth))
+            # print('dynamic depth error is {}'.format(error_dyan_depth))
+
+            # print('static flow error is {}'.format(error_static_flow))
+            # print('dynamic flow error is {}'.format(error_dyna_flow))
+
+            # # for i in range(target.shape[1]):
+            # #     error_flow = torch.mean(torch.abs(diff_flow[:,i][dynaflow[:,i]>0.0]))
+            # #     print('error of dynamic flow' + str(i) + ' is {}'.format(error_flow))
+
+            # print('overall depth is {}'.format(1.0/torch.mean(gtdisps[objectmasks>0.0])))
+            # print('frames are {}'.format(trackinfo['frames']))
+            # print('trackid is {}'.format(trackinfo['trackid'].item()))
+            # print('loss is {}'.format(loss.item()))
+            # print('r_err is {}'.format(r_err.item()))
+            # print('t_err is {}'.format(t_err.item()))
+
+            # print('ob_loss is {}'.format(ob_loss.item()))
+            # print('ob_r_err is {}'.format(ob_r_err.item()))
+            # print('ob_t_err is {}'.format(ob_t_err.item()))
+
+            # weight_vis = valid[...,0]*weight[...,0]
+            # weight_vis[weight_vis>0.5] = 1.0
+            # for i in range(target.shape[1]):
+                
+            #     if torch.count_nonzero(dynaflow[0,i]) != 0:
+            #         gt_dyna_flow = flow_to_image(lowgtflow[0,i].detach().cpu().numpy(), dynaflow[0,i].detach().cpu().numpy())
+            #         cv2.imwrite('./result/gt_dyna_flow/flow_gtdyna_'+ str(step) + '_' + str(i) +'.png', gt_dyna_flow)
+
+            #         pred_dyna_flow = flow_to_image(target[0,i].detach().cpu().numpy(), dynaflow[0,i].detach().cpu().numpy())
+            #         cv2.imwrite('./result/pred_dyna_flow/flow_preddyna_'+ str(step) + '_' + str(i) +'.png', pred_dyna_flow)
+
+            #     if (weight_vis[0,i].max() == 1.0):
+            #         target_flow = flow_to_image(target[0,i].detach().cpu().numpy(), weight_vis[0,i].detach().cpu().numpy())
+            #         cv2.imwrite('./result/pred_flow/flow_pred_'+ str(step) + '_' + str(i) +'.png', target_flow)
+            
+            # if ob_r_err.item()>0.1:
+            #     print('bad optimization!')
+
+            return Gs_list, ObjectGs_list, disp_list, static_residual_list, flow_low_list, low_disp_list
 
 def add_neighborhood_factors(t0, t1, r=2):
     """ add edges between neighboring frames within radius r """

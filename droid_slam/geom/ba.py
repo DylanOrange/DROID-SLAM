@@ -529,7 +529,7 @@ def fulldynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask,
     
     return poses, objectposes, disps
 
-def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
+def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, batch_grid, fixedp=0):
 
     app = app['apperance'][0][0]
     B, P, ht, wd = disps.shape#1,2,30,101
