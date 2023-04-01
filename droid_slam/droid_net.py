@@ -3,8 +3,6 @@ import cv2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import droid_backends
-from collections import OrderedDict
 
 from modules.extractor import BasicEncoder
 from modules.corr import CorrBlock, AltCorrBlock
@@ -69,8 +67,8 @@ class GraphAgg(nn.Module):
         # self.upmask_flow = nn.Sequential(
         #     nn.Conv2d(128, 4*4*9, 1, padding=0))
 
-        self.upmask = nn.Sequential(
-            nn.Conv2d(128, 8*8*9, 1, padding=0))
+        self.upmask_disp = nn.Sequential(
+            nn.Conv2d(128, 4*4*9, 1, padding=0))
 
     def forward(self, net, ii):
         batch, num, ch, ht, wd = net.shape
@@ -93,7 +91,7 @@ class GraphAgg(nn.Module):
         # net_more = net[less_size:]
 
         eta = self.eta(net).view(batch, -1, ht, wd)
-        upmask_disp = self.upmask(net).view(batch, -1, 8*8*9, ht, wd)
+        upmask_disp = self.upmask_disp(net).view(batch, -1, 4*4*9, ht, wd)
         # upmask_flow = self.upmask_flow(net_more).view(batch, -1, 4*4*9, ht, wd)#1,14,576,30,101
 
         return .01 * eta, upmask_disp
@@ -138,10 +136,10 @@ class UpdateModule(nn.Module):
         self.gru = ConvGRU(128, 128+128+64)
         self.agg = GraphAgg()
 
-        # self.mask_flow = nn.Sequential(
-        #     nn.Conv2d(128, 256, 3, padding=1),
-        #     nn.ReLU(inplace=True),
-        #     nn.Conv2d(256, 4*4*9, 1, padding=0))
+        self.mask_flow = nn.Sequential(
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 4*4*9, 1, padding=0))
 
         # self.mask_weight = nn.Sequential(
         #     nn.Conv2d(128, 128, 3, padding=1),
@@ -162,15 +160,15 @@ class UpdateModule(nn.Module):
         corr = corr.view(batch*num, -1, ht, wd)
         flow = flow.view(batch*num, -1, ht, wd)
 
-        corr = self.corr_encoder(corr)
-        flow = self.flow_encoder(flow)
-        net = self.gru(net, inp, corr, flow)
+        corr = self.corr_encoder(corr)#196->128
+        flow = self.flow_encoder(flow)#4->64
+        net = self.gru(net, inp, corr, flow)#128,128,128,64
 
         ### update variables ###
         delta = self.delta(net).view(*output_dim)
         weight = self.weight(net).view(*output_dim)
         # dyweight = self.dyweight(net).view(*output_dim)
-        # mask_flow = .25*self.mask_flow(net).view(*output_dim)
+        mask_flow = .25*self.mask_flow(net).view(*output_dim)
         # mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
         delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
@@ -181,7 +179,7 @@ class UpdateModule(nn.Module):
 
         if ii is not None:
             eta, upmask = self.agg(net, ii.to(net.device))
-            return net, delta, weight, eta, upmask
+            return net, delta, weight, eta, upmask, mask_flow
 
         else:
             return net, delta, weight
@@ -195,7 +193,7 @@ class DroidNet(nn.Module):
         self.update = UpdateModule()
 
 
-    def extract_features(self, images):
+    def extract_features(self, images, corners, recs):
         """ run feeature extraction networks """
 
         # normalize images
@@ -204,26 +202,26 @@ class DroidNet(nn.Module):
         std = torch.as_tensor([0.229, 0.224, 0.225], device=images.device)
         images = images.sub_(mean[:, None, None]).div_(std[:, None, None])
 
-        fmaps = self.fnet(images)
-        net = self.cnet(images)
+        fmaps, fmaps_high = self.fnet(images, corners, recs)
+        net, net_high = self.cnet(images, corners, recs)
         
         net, inp = net.split([128,128], dim=2)
         net = torch.tanh(net)
         inp = torch.relu(inp)
-        return fmaps, net, inp
+
+        net_high, inp_high = net_high.split([128,128], dim=2)
+        net_high = torch.tanh(net_high)
+        inp_high = torch.relu(inp_high)
+
+        return [fmaps, fmaps_high], [net, net_high], [inp, inp_high]
 
 
-    def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, disps, gtdisps, intrinsics, trackinfo, graph=None, num_steps=12, fixedp=2):
+    def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, lowimages, objectmasks, highmasks, \
+                disps, gtdisps, highgtdisps, intrinsics, trackinfo, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
         #Ps is ground truth
-        objectmasks = objectmasks[0]
-        corners = trackinfo['corner'][0]
-        rec = trackinfo['rec'][0]
-        # cropmasks = cropmasks[0]
-        # cropdisps = cropdisps[0]
-        # fullmasks = fullmasks[0]
-
-        # B = objectmasks.shape[0]
+        corners = [x[0] for x in trackinfo['corner']]
+        recs = [x[0] for x in trackinfo['rec']]
 
         ii, jj, _ = graph_to_edge_list(graph)
 
@@ -232,39 +230,38 @@ class DroidNet(nn.Module):
 
         validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
-        for index in range(2):
-            if index == 0:
-                ht, wd = images.shape[-2:]
-                coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
-                coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
-                batch_grid = None
-            else:
-                coords0 = pops.coords_grid(rec[0], rec[1], device=images.device)
-                coords1 = cropcoords1.detach()
-                intrinsics[...,:] *= 4
-                batch_grid = trackinfo['grid']
-                
+        # highintrinsics = intrinsics.clone()
+        # highintrinsics[...,:] *= 4
 
-            fmaps, net, inp = self.extract_features(images)
-            net, inp = net[:,ii], inp[:,ii]
-            corr_fn = CorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=3, radius=3)
+        # cropintrinsics = highintrinsics.clone()
+        # cropintrinsics[..., 2] -= corners[0][1]
+        # cropintrinsics[..., 3] -= corners[0][0]
+
+        # highcoords0 = pops.coords_grid(120, 404, device=images.device)
+
+        # gtflow, gtmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        # highgtflow, highmask = pops.dyprojective_transform(Ps, highgtdisps, highintrinsics, ii, jj, validmask, ObjectPs, highmasks)
+        # highgtflow -= highcoords0
+        
+        fmaps, net_all, inp_all = self.extract_features(images, corners, recs)
+
+        ht, wd = images.shape[-2:]
+        coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
+        coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+
+        all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, all_static_residual_list = [], [], [], [], []
+
+        for index in range(2):
+            print('optimzation {}'.format(index))
+            corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
             # corr_fn = AltCorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=3, radius=3)
 
             target = coords1.clone()
+            net, inp = net_all[index][:,ii], inp_all[index][:,ii]
 
-            # # highintrinsics = intrinsics.clone()
-            # # highintrinsics[...,:] *= 4
-            # # objectmasks = torch.zeros_like(objectmasks)
-            # # lowgtflow, lowmask = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj)
-            # lowgtflow, lowmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
-            # # highgtflow, highmask = pops.dyprojective_transform(Ps, fulldisps, highintrinsics, ii, jj, validmask, ObjectPs, fullmasks)
-            # for i in range(lowgtflow.shape[1]):
-            #     gtflow = flow_to_image(lowgtflow[0,i].cpu().numpy(), lowmask[0,i,...,0].cpu().numpy())
-            #     cv2.imwrite('./result/gtflow/gtflow_{}.png'.format(i),gtflow)
+            Gs_list, disp_list, ObGs_list, flow_list, static_residual_list = [], [], [], [], []
 
-            Gs_list, disp_list, ObjectGs_list, flow_low_list, static_residual_list, low_disp_list = [], [], [], [], [], []
-
-            for step in range(num_steps):
+            for step in range(num_steps[0][index]):
                 Gs = Gs.detach()
                 ObjectGs = ObjectGs.detach()
                 disps = disps.detach()
@@ -279,7 +276,7 @@ class DroidNet(nn.Module):
                 motion = torch.cat([flow, resd], dim=-1)
                 motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
-                net, delta, weight, eta, mask_disp = \
+                net, delta, weight, eta, mask_disp, mask_flow = \
                     self.update(net, inp, corr, motion, ii, jj)
 
                 target = coords1 + delta
@@ -304,54 +301,80 @@ class DroidNet(nn.Module):
 
                 # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
                 # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
-
                 for i in range(2):
-                    Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, batch_grid = batch_grid, fixedp=2)
+                    Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
+                                                    eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
-                coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks, batch_grid = batch_grid)
-                # coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
-                # coords_resi, valid_dyna = pops.dyprojective_transform(Gs, cropdisps, highintrinsics, ii, jj, validmask, ObjectGs, cropmasks, batch = True, batch_grid = trackinfo['grid'])
-            
-                # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
+                coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
+                                                                    validmask, ObjectGs, objectmasks)
+                
                 static_residual = (target - coords1)*valid_static
-                # dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
 
                 Gs_list.append(Gs)
-                ObjectGs_list.append(ObjectGs)
-                disp_list.append(upsample_flow(disps[..., None], mask_disp, 8, True)[...,0])
-                low_disp_list.append(disps)
+                ObGs_list.append(ObjectGs)
+                disp_list.append(disps)
                 static_residual_list.append(static_residual)
-                # dyna_residual_list.append(dyna_residual[dyna_residual>0])
-                flow_low_list.append(target)
+                flow_list.append(target)
+            
+            all_Gs_list.append(Gs_list)
+            all_ObGs_list.append(ObGs_list)
+            all_disp_list.append(disp_list)
+            all_static_residual_list.append(static_residual_list)
+            all_flow_list.append(flow_list)
 
-            images = pops.crop(images, corners, rec)[..., 0]
+            if index == 1:
+                break
 
-            upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
-            disps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
+            images = pops.crop(lowimages.permute(0,1,3,4,2), corners[0], recs[0]).permute(0,1,4,2,3)
+            objectmasks = pops.crop(highmasks, corners[0], recs[0])
 
-            upsampled_coords = upsample_flow(disps[..., None], mask_flow, 4, True)
-            coords = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
+            upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
+            disps = pops.crop(upsampled_disps, corners[0], recs[0])
 
+            upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
+
+            coords0 = pops.coords_grid(recs[0][0], recs[0][1], device=images.device)
+            coords1 = pops.crop(upsampled_flow, corners[0], recs[0]) + coords0
+
+            intrinsics[...,:] *= 4
+            intrinsics[..., 2] -= corners[0][1]
+            intrinsics[..., 3] -= corners[0][0]
+
+            # gtflow = pops.crop(highgtflow, corners[0], recs[0]) + coords0
+            # gtmask = pops.crop(highmask, corners[0], recs[0])
+            # disps = pops.crop(highgtdisps, corners[0], recs[0])
+        
+
+            # flow = (lowgtflow - coords0).squeeze(0)
+            # upsampled_flow = 4*F.interpolate(flow.permute(0,3,1,2), scale_factor=4, mode='bilinear', align_corners=True).permute(0,2,3,1)
+            # upsampled_coords1 = (upsampled_flow + highcoords0)[None]
+
+            # for i in range(highgtflow.shape[1]):
+            #     gtflow = flow_to_image(highgtflow[0,i].cpu().numpy(), highmask[0,i,...,0].cpu().numpy())
+            #     cv2.imwrite('./result/multiscale/highgtflow_{}.png'.format(i),gtflow)
+
+            #     upsampledflow = flow_to_image(upsampled_coords1[0,i].cpu().numpy(), highmask[0,i,...,0].cpu().numpy())
+            #     cv2.imwrite('./result/multiscale/upsampledflow_{}.png'.format(i),upsampledflow)
+
+
+            # crophighgtflow = pops.crop(highgtflow , corners[0], recs[0]) + coords0
+            # cropgtflow, cropgtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, \
+            #                                                      validmask, ObjectPs, objectmasks)
+
+            # for i in range(cropgtflow.shape[1]):
+            #     # highgtflow = flow_to_image(highgtflow[0,i].cpu().numpy(), highmask[0,i,...,0].cpu().numpy())
+            #     # cv2.imwrite('./result/multiscale/highgtflow_{}.png'.format(i),highgtflow)
+            #     gtflow = flow_to_image(crophighgtflow[0,i].cpu().numpy(), cropgtmask[0,i,...,0].cpu().numpy())
+            #     cv2.imwrite('./result/multiscale/crophighgtflow_{}.png'.format(i),gtflow)
+            #     cropflow = flow_to_image(cropgtflow[0,i].cpu().numpy(), cropgtmask[0,i,...,0].cpu().numpy())
+            #     cv2.imwrite('./result/multiscale/cropgtflow_{}.png'.format(i),cropflow)
+
+            #     cropsampledflow = flow_to_image(coords1[0,i].cpu().numpy(), cropgtmask[0,i,...,0].cpu().numpy())
+            #     cv2.imwrite('./result/multiscale/cropupsampledflow_{}.png'.format(i),cropsampledflow)
+            
+            # print('-----')
             # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
             # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
-
-            # # # coords1, valid_static = pops.projective_transform(Ps, gtdisps, intrinsics, ii, jj ,return_depth = True)
-            # # # thresh = 0.005
-            # # # dj = 1.0/coords1[..., 2]
-            # # # djj = 1.0/gtdisps[:,jj]
-            # # # d01 = torch.zeros_like(dj)
-            # # # d10 = torch.zeros_like(dj)
-            # # # d11 = torch.zeros_like(dj)
-            # # # d01[:,:,:-1,:] = djj[:,:,1:,:]
-            # # # d10[:,:,:,:-1] = djj[:,:,:,1:]
-            # # # d11[:,:,:-1,:-1] = djj[:,:,1:,1:]
-            # # # counter = (((dj - djj)> thresh).float() + ((dj - d01)> thresh).float() + ((dj - d10)> thresh).float() + ((dj - d11)> thresh).float())
-            # # # masks = (counter>=2)
-
-            # # # thresh = 0.005 * torch.ones_like(disps[0].mean(dim=[1,2])).float()
-            # # # dirty_index = torch.tensor([0,1,2,3,4], device = 'cuda')
-            # # # count = droid_backends.depth_filter(Ps[0].data.float(), gtdisps[0].float(), intrinsics[0,0].float(), dirty_index, thresh)
-            # # # masks = ((count>=2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True)))
 
             # dynaflow = objectmasks[:,ii].long()
 
@@ -412,7 +435,8 @@ class DroidNet(nn.Module):
             # if ob_r_err.item()>0.1:
             #     print('bad optimization!')
 
-            return Gs_list, ObjectGs_list, disp_list, static_residual_list, flow_low_list, low_disp_list
+        
+        return all_Gs_list, all_ObGs_list, all_disp_list, all_static_residual_list, all_flow_list
 
 def add_neighborhood_factors(t0, t1, r=2):
     """ add edges between neighboring frames within radius r """

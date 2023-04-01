@@ -529,7 +529,7 @@ def fulldynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask,
     
     return poses, objectposes, disps
 
-def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, batch_grid, fixedp=0):
+def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 
     app = app['apperance'][0][0]
     B, P, ht, wd = disps.shape#1,2,30,101
@@ -539,14 +539,16 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
 
     ### 1: co mpute jacobians and residuals ###
     coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
-        poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = True, batch = False, batch_grid = None)
+        poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, \
+        objectmask = objectmask, Jacobian = True, batch = False)
 
-    # r = (target - coords)*valid*weight
-    # residual = r[r!=0.0]
-    # print('residual is {}'.format(torch.mean((torch.abs(residual)))))
+    r = (target - coords)*valid*weight
+    residual = r[r!=0.0]
+    print('residual is {}'.format(torch.mean((torch.abs(residual)))))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
     w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
+    # w = .001*(valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
@@ -557,23 +559,16 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     ii_scatter = i*P + ii
     jj_scatter = i*P + jj
 
-    h_list = []
-    # print('Jci shape is {}'.format(Jci.shape))
-    # print('ii_scatter is {}'.format(ii_scatter.shape))
     hc = scatter_sum(Jci, ii_scatter, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_scatter, dim = 1,dim_size= N*P)
     hc = hc.view(B, N, P, -1, D)#1,14,5,6060,6
 
-    h_list.append(hc[:, :, fixedp:])
+    hoi = scatter_sum(Joi, ii_scatter, dim = 1, dim_size= N*P) + scatter_sum(Joj, jj_scatter, dim = 1, dim_size= N*P)
+    hoi = hoi.view(B, N, P, -1, D)
 
-    _, _, _, k, _=hc.shape
+    h = torch.cat((hc[:, :, fixedp:], hoi[:, :, app[fixedp:]]), dim = 2)
 
-    for i in range(N_car):
-        hoi = scatter_sum(Joi[i], ii_scatter, dim = 0,dim_size= N*P) + scatter_sum(Joj[i], jj_scatter, dim = 0,dim_size= N*P)
-        hoi = hoi.view(B, N, P, -1, D)
-        h_list.append(hoi[:, :, app[fixedp:]])
-
-    h = torch.cat(h_list, dim = 2)
-    _, _,U, _, _ = h.shape
+    U = h.shape[2]
+    k = hc.shape[3]
 
     h = h.transpose(2,3).contiguous().view(B, N, k, U*D)#2,14,8330,36
     wh= h*w#2,14,8330,36
@@ -617,13 +612,7 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
     Eo = Eo.view(B, N_car, P, M, D, ht*wd)#6,3,5,6,30*101
 
-    E_list = []
-    E_list.append(Ec)
-
-    for i in range(N_car):
-        # Eo[:, i, app[i][:fixedp]] = 0
-        E_list.append(Eo[:,i,app[fixedp:]])
-    E = torch.cat(E_list, dim=1)
+    E = torch.cat((Ec, Eo[:, 0, app[fixedp:]]), dim=1)
 
     ### 3: solve the system ###
     dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
@@ -631,11 +620,13 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     P = P-fixedp
     poses = pose_retr(poses, dx[:,:P], torch.arange(P).to(device=dx.device) + fixedp)
 
-    idx = P
-    for i in range(N_car):
-        nextidx = idx+len(app)-fixedp
-        objectposes[i] = pose_retr(objectposes[i, None], dx[:, idx:nextidx], app[fixedp:])
-        idx = nextidx
+    # idx = P
+    # for i in range(N_car):
+    #     nextidx = idx+len(app)-fixedp
+    #      objectposes = pose_retr(objectposes, dx[:, P:], app[fixedp:])
+    #     idx = nextidx
+
+    objectposes = pose_retr(objectposes, dx[:, P:], app[fixedp:])
 
     disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
     disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
@@ -652,7 +643,8 @@ def dynamictestBA(target, weight, objectposes, objectmask, app, validmask, eta, 
 
     ### 1: compute jacobians and residuals ###
     coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
-        poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = True, batch = False, batch_grid = None)
+        poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, \
+        objectmask = objectmask, Jacobian = True, batch = False, batch_grid = None)
 
     # r = (target - coords)*valid*weight
     # residual = r[r!=0.0]

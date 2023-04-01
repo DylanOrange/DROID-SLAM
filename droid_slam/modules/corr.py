@@ -30,12 +30,13 @@ class CorrBlock:
         corr = CorrBlock.corr(fmap1, fmap2)
 
         batch, num, h1, w1, h2, w2 = corr.shape
+        self.corr_pyramid.append(corr.view(batch*num, h1, w1, h2, w2))
         corr = corr.reshape(batch*num*h1*w1, 1, h2, w2)
-        
-        for i in range(self.num_levels):
+
+        for i in range(1, self.num_levels):
+            corr = F.avg_pool2d(corr, 2, stride=2)
             self.corr_pyramid.append(
                 corr.view(batch*num, h1, w1, h2//2**i, w2//2**i))
-            corr = F.avg_pool2d(corr, 2, stride=2)
             
     def __call__(self, coords):
         out_pyramid = []

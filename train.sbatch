@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH --job-name="12_2_val_test"
+#SBATCH --job-name="training"
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --gres=gpu:1,VRAM:24G
-#SBATCH --mem=6G
+#SBATCH --gres=gpu:1,VRAM:48G
+#SBATCH --mem=12G
 #SBATCH --time=24:00:00
 #SBATCH --mail-type=NONE
 #SBATCH --no-requeue

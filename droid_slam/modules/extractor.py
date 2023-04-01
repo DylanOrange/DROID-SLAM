@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import torchvision.transforms.functional as TF
+import geom.projective_ops as pops
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_planes, planes, norm_fn='group', stride=1):
@@ -52,6 +53,9 @@ class ResidualBlock(nn.Module):
         if self.downsample is not None:
             x = self.downsample(x)
 
+        if x.shape[1] != y.shape[1]:  # for the uplayers.
+            return y
+        
         return self.relu(x+y)
 
 
@@ -144,6 +148,11 @@ class BasicEncoder(nn.Module):
         # output convolution
         self.conv2 = nn.Conv2d(4*DIM, output_dim, kernel_size=1)
 
+        self.in_planes = output_dim + 2*DIM
+        self.up_layer2 = self._make_layer(output_dim, stride=1)
+        self.in_planes = output_dim + DIM
+        self.up_layer1 = self._make_layer(output_dim, stride=1)
+
         if self.multidim:
             self.layer4 = self._make_layer(256, stride=2)
             self.layer5 = self._make_layer(512, stride=2)
@@ -180,7 +189,7 @@ class BasicEncoder(nn.Module):
         self.in_planes = dim
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, corners, recs):
         b, n, c1, h1, w1 = x.shape
         x = x.view(b*n, c1, h1, w1)
 
@@ -189,10 +198,25 @@ class BasicEncoder(nn.Module):
         x = self.relu1(x)
 
         x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
+        enc_out1 = pops.crop(x, corners[0], recs[0])#6,32,120,404
 
+        x = self.layer2(x)
+        enc_out2 = pops.crop(x, corners[1], recs[1])#6,64,60,202
+
+        x = self.layer3(x)
         x = self.conv2(x)
+        enc_out3 = pops.crop(x, corners[2], recs[2])#6,128,30,101
+
+        cur_h, cur_w = enc_out2.shape[-2:]
+        enc_out3_resized = TF.resize(enc_out3, (cur_h, cur_w))#6,128,60,202
+        up2layer_input = torch.cat((enc_out3_resized, enc_out2), dim=1)#6,128+64,60,202
+        up2_out = self.up_layer2(up2layer_input)#2,128,48,156
+
+        # uplayer1:
+        cur_h, cur_w = enc_out1.size()[-2:]
+        up2_out_resized = TF.resize(up2_out, (cur_h, cur_w))#6,64,120,404
+        up1layer_input = torch.cat((up2_out_resized, enc_out1), dim=1)
+        up1_out = self.up_layer1(up1layer_input)#6,32,120,404
 
         _, c2, h2, w2 = x.shape
-        return x.view(b, n, c2, h2, w2)
+        return x.view(b, n, c2, h2, w2), up1_out[None]

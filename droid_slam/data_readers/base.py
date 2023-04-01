@@ -72,12 +72,19 @@ class RGBDDataset(data.Dataset):
             # if not self.__class__.is_test_scene(scene):
             # dataset_index = []
             objectinfo = self.scene_info[scene]['object']
+            cameragraph = self.scene_info[scene]['graph']
             for id in self.alltrackid:
                 objectgraph = objectinfo[id][3]
+                frameidx_list = objectinfo[id][0]
                 for i in objectgraph:
                     k = (objectgraph[i][1] > self.obfmin) & (objectgraph[i][1] < self.obfmax)
                     if k.any():
-                        self.dataset_index.append((scene, id, i))
+                        camera_frame = frameidx_list[i]
+                        camera_idx = np.isin(cameragraph[camera_frame][0], frameidx_list[objectgraph[i][0][k]])
+                        factor_camera = cameragraph[camera_frame][1][camera_idx]
+                        m = (factor_camera > self.fmin) & (factor_camera < self.fmax)
+                        if m.any():
+                            self.dataset_index.append((scene, id, i))
             # self.dataset_index[scene] = dataset_index
             # else:
             #     print("Reserving {} for validation".format(scene))
@@ -138,11 +145,11 @@ class RGBDDataset(data.Dataset):
 
     @staticmethod
     def cornerinfo(objectmask):
-        rec = torch.tensor([0,0])
+        # rec = torch.tensor([0,0])
         coords = torch.nonzero(objectmask)
-        corner_min = torch.min(coords, dim = 0).values[1:]
-        corner_max = torch.max(coords, dim = 0).values[1:]
-        rec = torch.maximum(corner_max - corner_min, rec)
+        corner_min = torch.amin(coords, dim = 0)[1:]
+        corner_max = torch.amax(coords, dim = 0)[1:]
+        rec = corner_max - corner_min
         
         # corners = []
         # for id in TRACKID:
@@ -221,29 +228,15 @@ class RGBDDataset(data.Dataset):
 
     def __getitem__(self, index):
         """ return training video """
-        # scene_id = random.sample(self.dataset_index.keys(), 1)[0] 
-        # scene_id  = self.root
-        # objectinfo = self.scene_info[scene_id]['object']
-        # trackid = random.sample(self.alltrackid, 1)[0]
-        # while(1):
-        #     trackid = random.sample(self.alltrackid, 1)[0]  # 随机一个字典中的key，第二个参数为限制个数
-        #     objectgraph = objectinfo[trackid][3]
-        #     # graph = self.scene_info[scene]['graph']
-        #     dataset_index= []
-        #     for i in objectgraph:
-        #             k = (objectgraph[i][1] > self.obfmin) & (objectgraph[i][1] < self.obfmax)
-        #             if k.any():
-        #                 dataset_index.append(i)
-        #     if len(dataset_index) > self.n_frames-2:
-        #         break
-        # index = random.randint(0,len(self.dataset_index[scene_id])-1)
-        # print('generated index is {}'.format(index))
-        index = index % len(self.dataset_index)
+
+        # index = index % len(self.dataset_index)
+
+        index = 0
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
         objectgraph = objectinfo[trackid][3]
 
-        # frame_graph = self.scene_info[scene_id]['graph']
+        frame_graph = self.scene_info[scene_id]['graph']
         images_list = self.scene_info[scene_id]['images']
         depths_list = self.scene_info[scene_id]['depths']
         poses_list = self.scene_info[scene_id]['poses']
@@ -258,7 +251,14 @@ class RGBDDataset(data.Dataset):
         while len(inds) < self.n_frames:
             # get other frames within flow threshold
             k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
-            frames = objectgraph[ix][0][k]
+            object_frames = objectgraph[ix][0][k]
+
+            camera_idx = frameidx_list[ix]
+            m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
+            camera_frames = frame_graph[camera_idx][0][m]
+
+            intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
+            frames = np.isin(frameidx_list, intersect).nonzero()[0]
 
             if np.count_nonzero(frames[frames > ix]):
                 ix = np.random.choice(frames[frames > ix])
@@ -272,48 +272,20 @@ class RGBDDataset(data.Dataset):
 
         # print('scene is {}'.format(scene_id))
         # print('trackid is {}'.format(trackid))
-        # print('object graph is {}'.format(inds))
+        # print('frames are {}'.format(frameidx_list[inds]))
         # for i in range(len(inds)-1):
+        #     camera_frame = frameidx_list[inds[i]]
+        #     next_ca_fream = frameidx_list[inds[i+1]]
         #     print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
-        #     print('camera flow is {}'.format(frame_graph[inds[i]][1][frame_graph[inds[i]][0] == inds[i+1]]))
-
-
-        # n_all = len(self.dataset_index)
-        # step = 2
-        # half = (self.n_frames//2)*step
-        # if half<=ix<=n_all-half:
-        #     inds = np.arange(ix - half, ix +half,step)
-        # elif ix<20:
-        #     inds = np.arange(ix, ix + half*2,step)
-        # else:
-        #     inds= np.arange(ix - half*2, ix,step)
+        #     print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_fream]))
         
         # inds =np.sort(inds)
-
-        # inds_droid = [ idx ]
-        # while len(inds_droid) < self.n_frames:
-        #     # get other frames within flow threshold
-        #     k = (frame_graph[idx][1] > self.fmin) & (frame_graph[idx][1] < self.fmax)
-        #     frames = frame_graph[idx][0][k]
-
-        #     # prefer frames forward in time
-        #     if np.count_nonzero(frames[frames > idx]):
-        #         idx = np.random.choice(frames[frames > idx])
-            
-        #     elif np.count_nonzero(frames):
-        #         idx = np.random.choice(frames)
-
-        #     inds_droid += [ idx ]
-
-        # print('camera graph is {}'.format(inds_droid))
-        # for i in range(len(inds_droid)-1):
-        #     print('camera flow is {}'.format(frame_graph[inds_droid[i]][1][frame_graph[inds_droid[i]][0] == inds_droid[i+1]]))
 
         #读取mask并确定要追踪的车的id
         images, depths, poses, intrinsics, objectmasks, objectposes, insmasks, highdepths = [], [], [], [], [], [], [], []
         for i in inds:
             images.append(self.__class__.image_read(images_list[frameidx_list[i]]))
-            depth, highdepth = self.__class__.vkittidepth_read(depths_list[frameidx_list[i]])
+            depth, highdepth = self.__class__.vkittidepth_read(depths_list[frameidx_list[i]])#1/8 resolution, 1/2 resolution
             depths.append(depth)
             highdepths.append(highdepth)
             poses.append(poses_list[frameidx_list[i]])
@@ -323,7 +295,7 @@ class RGBDDataset(data.Dataset):
             objectposes.append(objectposes_list[i])
 
             # objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[0])
-            insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]])[0])
+            insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]])[0])#1 resolution
 
         images = np.stack(images).astype(np.float32)
         depths = np.stack(depths).astype(np.float32)
@@ -342,89 +314,58 @@ class RGBDDataset(data.Dataset):
         #     cv2.imwrite('./result/object/mask_'+ str(n)+'.png', vis_image)
 
         images = torch.from_numpy(images)
-        N, h0, w0 = images.shape[:3]
+        _, h0, w0 = images.shape[:3]
 
         depths = torch.from_numpy(depths)
         highdepths = torch.from_numpy(highdepths)
 
         poses = torch.from_numpy(poses)
-        objectmasks = torch.from_numpy(objectmasks)[None]
-        objectposes = torch.from_numpy(objectposes)[None]
+        objectmasks = torch.from_numpy(objectmasks)
+        objectposes = torch.from_numpy(objectposes)
         insmasks = torch.from_numpy(insmasks)
         intrinsics = torch.from_numpy(intrinsics)
         intrinsics[:, 0:2] *= ((self.w1//self.scale)/ w0)
         intrinsics[:, 2:4] *= ((self.h1//self.scale)/ h0)
 
-
-        # TRACKID, N_app, Apperance = self.trackinfo(objectmasks, inds)#
-
-        # objectmasks = torch.nn.functional.interpolate(objectmasks[:, None].double(), size = (self.h1//self.cropscale, self.w1//self.cropscale), mode= 'bicubic').int().squeeze(1)#5,375,1242 ->5,120,404
-        # corner, rec = self.cornerinfo(insmasks, trackid)
-
         images = images.permute(0, 3, 1, 2)
         images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1), mode = 'bilinear')
 
         if self.aug is not None:
-            # images, objectmasks, poses, disps, intrinsics = \
-            #         self.aug(images, objectmasks, poses, disps, intrinsics)
-            images = self.aug(images)
+            highimages = self.aug(images)
 
-        # if TRACKID != -2:
-        #     objectposes = self.__class__.objectpose_read(self.root, inds, TRACKID, Apperance)
-        # else: 
-        #     objectposes = torch.zeros(1,self.n_frames,7, dtype = poses.dtype)
-        #     objectposes[...,-1] = 1.0
+        lowimages = torch.nn.functional.interpolate(highimages, size = (self.h1//2,self.w1//2), mode = 'bilinear')
 
-        insmask = torch.nn.functional.interpolate(insmasks[:, None], size = (self.h1, self.w1)).squeeze(1)
-        highmask = torch.where(insmask == (trackid+1.0), 1.0, 0.0)[None]
-        corner, rec = self.cornerinfo(highmask)
-        # quanmask = self.construct_objectmask(trackid, quanmask)
-
-        # fullmasks = self.construct_objectmask(TRACKID, sampledmasks)#7,5,120,404
-
-        # cropmasks = crop(fullmasks[..., None], corner, rec).squeeze(-1)#7,5,99,217
+        corners, recs = [], []
+        insmask = torch.nn.functional.interpolate(insmasks[:, None], size = (self.h1//2, self.w1//2)).squeeze(1)
+        highmask = torch.where(insmask == (trackid+1.0), 1.0, 0.0)
+        mask = highmask.clone()
+        for level in range(3):
+            corner, rec = self.cornerinfo(highmask)
+            highmask = torch.nn.functional.interpolate(highmask[:, None], size = (self.h1//(2**(level+2)), self.w1//(2**(level+2)))).squeeze(1)
+            corners.append(corner)
+            recs.append(rec)
         
-        # B = len(TRACKID)
-        # objectmasks = fullmasks.view(B*N, -1, self.h1//self.cropscale, self.w1//self.cropscale)#35,1,120,404
-        # objectmasks = torch.nn.functional.interpolate(objectmasks, size = (self.h1//self.scale, self.w1//self.scale))#35,1,120,404 ->35,1,30,101
-        # objectmasks = objectmasks.view(B, N, self.h1//self.scale, self.w1//self.scale)#7,5,30,101
-
-        # sampleddepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1, self.w1))#5,375,1242 ->5,240,808
+        # img = lowimages.permute(0,2,3,1).numpy().astype(np.uint8).copy()
+        # reccorner = corners[0].tolist()
+        # recrec = recs[0].tolist()
+        # for i in range(len(img)):
+        #     cv2.rectangle(img[i], (reccorner[1], reccorner[0]) , (reccorner[1]+recrec[1], reccorner[0]+recrec[0]), color=(0, 255, 255), thickness=1)
+        #     cv2.imwrite('./result/crop/'+str(frameidx_list[inds][i])+'.png',img[i])
+        
         disps = 1.0/depths
         highdisps = 1.0/highdepths
-        # max_depth = (1/disps).max()
-        # depth_vis(disps,'gt', max_depth)
-
-        # cropdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.cropscale, self.w1//self.cropscale))#5,1,375,1242 ->5,1,120,404
-        # fulldepths = 1.0/cropdepths.squeeze(1)
-
-        # cropdepths = cropdepths.transpose(0,1).expand(B,-1,-1,-1)
-        # cropdepths = crop(cropdepths[..., None], corner, rec, depth =True)#7,5,99,217
-        # cropdisps = 1.0/cropdepths.squeeze(-1)
-
-        # if torch.isin(12, TRACKID) and 1.0/torch.mean(cropdisps[cropmasks>0.0]) > 20.0:
-        #     cropdisps[:] = -0.1
             
-        batchgrid = batch_grid(corner, rec)
+        batchgrid = batch_grid(corners[0], recs[0])
         Apperance = [torch.arange(self.n_frames)]
         trackinfo = {
             'trackid': torch.tensor([trackid]).to('cuda'),
             'apperance': [x.to('cuda') for x in Apperance],
             # 'n_app': N_app,
             'frames': frameidx_list[inds],
-            'corner': corner.to('cuda'),
-            'rec': rec.to('cuda'),
+            'corner': [x.to('cuda') for x in corners],
+            'rec': [x.to('cuda') for x in recs],
             'grid': tuple(t.to('cuda') for t in batchgrid)
         }
-
-        # scale scened
-        # objectdistance = (sampleddepths.squeeze(1))[(quanmask.int())[0]>0.0]
-        # meandistance = objectdistance.mean()
-        # print('real scale mean depth is {}'.format(meandistance))
-
-        # if TRACKID != -2:
-        #     print('real scale least depth is {}'.format(objectdistance.min()))
-        #     print('real scale farest depth is {}'.format(objectdistance.max()))
 
         if len(disps[disps>0.01]) > 0:
             s = disps[disps>0.01].mean()
@@ -433,10 +374,9 @@ class RGBDDataset(data.Dataset):
             poses[...,:3] *= s
             objectposes[...,:3] *= s
 
-        # print('trackid is {}'.format(trackid))
-        # print('poses is {}'.format(poses))
-        # print('objectposes is {}'.format(objectposes))
-        return images.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), objectmasks.to('cuda'), disps.to('cuda'), highdisps.to('cuda'), highmask.to('cuda'), intrinsics.to('cuda'), trackinfo, s.to('cuda')
+        return highimages.to('cuda'), lowimages.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), \
+            objectmasks.to('cuda'), disps.to('cuda'), highdisps.to('cuda'), \
+            mask.to('cuda'), intrinsics.to('cuda'), trackinfo, s.to('cuda')
 
     def __len__(self):
         return len(self.dataset_index)

@@ -186,7 +186,7 @@ class VKitti2(RGBDDataset):
         depthlow[depthlow == np.inf] = 1.0
         depthlow[depthlow == 0] = 1.0
 
-        depthhigh = np.array(depth.resize((808,240), Image.NEAREST)) / (VKitti2.DEPTH_SCALE*100)
+        depthhigh = np.array(depth.resize((404,120), Image.NEAREST)) / (VKitti2.DEPTH_SCALE*100)
         depthhigh[depthhigh == np.nan] = 1.0
         depthhigh[depthhigh == np.inf] = 1.0
         depthhigh[depthhigh == 0] = 1.0

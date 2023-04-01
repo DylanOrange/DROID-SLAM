@@ -16,32 +16,38 @@ def coords_grid(ht, wd, **kwargs):
     return torch.stack([x, y], dim=-1)
 
 def batch_grid(corners, rec):
-    B = corners.shape[0]
-    x_list, y_list = [], []
-    for i in range(B):
-        y, x = torch.meshgrid(
-            torch.arange(corners[i,0], corners[i,0]+rec[0]).float(),
-            torch.arange(corners[i,1], corners[i,1]+rec[1]).float())
-        y_list.append(y)
-        x_list.append(x)
-    x = torch.stack(x_list).unsqueeze(1)
-    y = torch.stack(y_list).unsqueeze(1)
+    # B = corners.shape[0]
+    # x_list, y_list = [], []
+    # for i in range(B):
+    #     y, x = torch.meshgrid(
+    #         torch.arange(corners[i,0], corners[i,0]+rec[0]).float(),
+    #         torch.arange(corners[i,1], corners[i,1]+rec[1]).float())
+    #     y_list.append(y)
+    #     x_list.append(x)
+    # x = torch.stack(x_list).unsqueeze(1)
+    # y = torch.stack(y_list).unsqueeze(1)
+
+    y, x = torch.meshgrid(
+        torch.arange(corners[0], corners[0]+rec[0]).float(),
+        torch.arange(corners[1], corners[1]+rec[1]).float())
     return (x,y)
 
 def crop(images, center, rec, depth = False):
-    B,N,_,_,ch = images.shape
-    output = torch.zeros(B, N, rec[0], rec[1], ch, dtype=images.dtype, device = images.device)
-    if depth:
-        output[output == 0.0] = -0.1
-    for n in range(B):
-        crop = images[n, :, center[n,0]:center[n,0]+rec[0], center[n,1]:center[n,1]+rec[1]]
-        try:
-            output[n] = crop
-        except Exception as e:
-            #padding
-            # print(e)
-            h,w = crop.shape[1:3]
-            output[n,:, :h, :w] = crop
+    # B,N,_,_,ch = images.shape
+    # output = torch.zeros(B, N, rec[0], rec[1], ch, dtype=images.dtype, device = images.device)
+    # if depth:
+    #     output[output == 0.0] = -0.1
+    # for n in range(B):
+    #     crop = images[n, :, center[n,0]:center[n,0]+rec[0], center[n,1]:center[n,1]+rec[1]]
+    #     try:
+    #         output[n] = crop
+    #     except Exception as e:
+    #         #padding
+    #         # print(e)
+    #         h,w = crop.shape[1:3]
+    #         output[n,:, :h, :w] = crop
+    output = images[:, :, center[0]:center[0]+rec[0], center[1]:center[1]+rec[1]]
+
     return output
 
 def iproj(disps, intrinsics, jacobian=False, batch_grid = None):
