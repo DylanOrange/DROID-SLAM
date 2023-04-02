@@ -304,7 +304,7 @@ class DroidNet(nn.Module):
 
             # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
             # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
-
+            print('begin BA!')
             for i in range(2):
                 # Gs, disps, valid = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
                 Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
@@ -316,7 +316,8 @@ class DroidNet(nn.Module):
             # residual = (cropflow - coords_resi)*cropmasks[:,ii, ..., None]*valid
             static_residual = (target - coords1)*valid_static
             # dyna_residual = (target - coords1)*objectmasks[:,ii, ..., None]
-
+            print('BA residual is {}'.format(static_residual.abs().mean()))
+            print('target is {}'.format(target.mean()))
             Gs_list.append(Gs)
             ObjectGs_list.append(ObjectGs)
             disp_list.append(upsample_flow(disps[..., None], mask_disp, 8, True)[...,0])

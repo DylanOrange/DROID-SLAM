@@ -541,9 +541,9 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = True, batch = False, batch_grid = None)
 
-    # r = (target - coords)*valid*weight
-    # residual = r[r!=0.0]
-    # print('residual is {}'.format(torch.mean((torch.abs(residual)))))
+    r = (target - coords)*valid*weight
+    residual = r[r!=0.0]
+    print('residual is {}'.format(torch.mean((torch.abs(residual)))))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
     w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1

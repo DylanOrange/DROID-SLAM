@@ -233,7 +233,7 @@ class RGBDDataset(data.Dataset):
         #         break
         # index = random.randint(0,len(self.dataset_index[scene_id])-1)
         # print('generated index is {}'.format(index))
-        index = index % len(self.dataset_index)
+        index = 10
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
         objectgraph = objectinfo[trackid][3]
@@ -250,24 +250,25 @@ class RGBDDataset(data.Dataset):
         objectmasks_list = objectinfo[trackid][2]
 
         inds = [ ix ]
-        while len(inds) < self.n_frames:
-            # get other frames within flow threshold
-            k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
-            frames = objectgraph[ix][0][k]
+        # while len(inds) < self.n_frames:
+        #     # get other frames within flow threshold
+        #     k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
+        #     frames = objectgraph[ix][0][k]
 
-            if np.count_nonzero(frames[frames > ix]):
-                ix = np.random.choice(frames[frames > ix])
+        #     if np.count_nonzero(frames[frames > ix]):
+        #         ix = np.random.choice(frames[frames > ix])
             
-            elif np.count_nonzero(frames):
-                ix = np.random.choice(frames)
+        #     elif np.count_nonzero(frames):
+        #         ix = np.random.choice(frames)
             
-            inds += [ ix ]
-
+        #     inds += [ ix ]
+        inds =[10, 12, 13, 14, 15, 16]
         inds = np.array(inds)
 
-        # print('scene is {}'.format(scene_id))
-        # print('trackid is {}'.format(trackid))
-        # print('object graph is {}'.format(inds))
+        print('scene is {}'.format(scene_id))
+        print('trackid is {}'.format(trackid))
+        print('object graph is {}'.format(inds))
+        print('camera frames are {}'.format(frameidx_list[inds]))
         # for i in range(len(inds)-1):
         #     print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
         #     print('camera flow is {}'.format(frame_graph[inds[i]][1][frame_graph[inds[i]][0] == inds[i+1]]))

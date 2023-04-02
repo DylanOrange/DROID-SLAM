@@ -98,7 +98,7 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9, do_scale=True, object = False, track
         #     print(trackinfo['frames'])
         #     # print(Ps.data)
         #     # print(Gs[0].data)
-
+    print('geo loss is {}'.format(geodesic_loss))
     return geodesic_loss, metrics
 
 def smooth_loss(Gs, gamma=0.9):
@@ -251,10 +251,12 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
 
     for i in range(n):
         w = gamma ** (n - i - 1)
-
+        print('lowgtflow is {}'.format(lowgtflow.mean()))
+        print('flow_list is {}'.format(flow_low_list[i].mean()))
         #看预测的流准不准
         i_error_low = (lowgtflow - flow_low_list[i]).abs()
         l1_lowflow = lowmask*i_error_low
+        print('low flow error is {}'.format(l1_lowflow.mean()))
         error_low += w*(l1_lowflow.mean())
 
         #看预测的深度和Pose准不准
@@ -321,6 +323,7 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
     epe_low = l1_lowflow[lowmask[..., 0] > 0.5]
     epe_high = epe_high.reshape(-1)[v.reshape(-1) > 0.5]
 
+    print('low_f_eror is {}'.format(epe_low.mean().item()))
     metrics = {
         'low_f_error': epe_low.mean().item(),
         'low_1px': (epe_low<1.0).float().mean().item(),

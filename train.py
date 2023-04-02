@@ -232,7 +232,7 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='largedata', help='name your experiment')
+    parser.add_argument('--name', default='test', help='name your experiment')
     # parser.add_argument('--ckpt', help='checkpoint to restore',default='./checkpoints/30*101_15_2_objectflow_008000.pth')
     parser.add_argument('--ckpt', help='checkpoint to restore',default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
@@ -240,8 +240,8 @@ if __name__ == '__main__':
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=1)
-    parser.add_argument('--steps', type=int, default=80000)
+    parser.add_argument('--iters', type=int, default=12)
+    parser.add_argument('--steps', type=int, default=1)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=6)
