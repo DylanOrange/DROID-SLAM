@@ -76,6 +76,7 @@ def geodesic_loss(Ps, poses, graph, gamma=0.9, do_scale=True, object = False):
             dE = Sim3(dG * dP.inv()).detach()
             r_err, t_err, s_err = pose_metrics(dE)
 
+        print('geo loss is {}'.format(geodesic_loss))
         geoloss_list.append(geodesic_loss)
 
         if object == False:
@@ -198,6 +199,7 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
 
         #low resolution flow
         i_error_low = lowmask*(lowgtflow - flow_list[0][i]).abs()
+        print('low flow error is {}'.format(i_error_low.mean().item()))
         error_lowflow += w*(i_error_low.mean())
 
         #low resolution dyna flow
@@ -299,7 +301,7 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
 
     epe_low = i_error_low[lowmask[..., 0] > 0.5]
     # epe_high = i_error_high[highmask[..., 0] > 0.5]
-
+    print('low_f_eror is {}'.format(epe_low.mean().item()))
     metrics = {
         'low_f_error': epe_low.mean().item(),
         'low_1px': (epe_low<1.0).float().mean().item(),

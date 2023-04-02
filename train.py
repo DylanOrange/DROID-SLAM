@@ -255,7 +255,7 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='lowck', help='name your experiment')
+    parser.add_argument('--name', default='test', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
@@ -263,7 +263,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=[[12,12]])
-    parser.add_argument('--steps', type=int, default=80000)
+    parser.add_argument('--steps', type=int, default=1)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=6)
@@ -275,7 +275,7 @@ if __name__ == '__main__':
     parser.add_argument('--fmin', type=float, default=8.0)
     parser.add_argument('--fmax', type=float, default=96.0)
     parser.add_argument('--obfmin', type=float, default=5.0)
-    parser.add_argument('--obfmax', type=float, default=30.0)
+    parser.add_argument('--obfmax', type=float, default=20.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')
     parser.add_argument('--edges', type=int, default=24)

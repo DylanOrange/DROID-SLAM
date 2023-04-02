@@ -314,6 +314,8 @@ class DroidNet(nn.Module):
                 
                 static_residual = (target - coords1)*valid_static
 
+                print('BA residual is {}'.format(static_residual.abs().mean()))
+
                 Gs_list.append(Gs)
                 ObGs_list.append(ObjectGs)
                 disp_list.append(disps)

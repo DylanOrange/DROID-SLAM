@@ -229,9 +229,9 @@ class RGBDDataset(data.Dataset):
     def __getitem__(self, index):
         """ return training video """
 
-        index = index % len(self.dataset_index)
+        # index = index % len(self.dataset_index)
 
-        # index = 0
+        index = 10
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
         objectgraph = objectinfo[trackid][3]
@@ -247,27 +247,27 @@ class RGBDDataset(data.Dataset):
         objectposes_list = objectinfo[trackid][1]
         objectmasks_list = objectinfo[trackid][2]
 
-        inds = [ ix ]
-        while len(inds) < self.n_frames:
-            # get other frames within flow threshold
-            k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
-            object_frames = objectgraph[ix][0][k]
+        # inds = [ ix ]
+        # while len(inds) < self.n_frames:
+        #     # get other frames within flow threshold
+        #     k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
+        #     object_frames = objectgraph[ix][0][k]
 
-            camera_idx = frameidx_list[ix]
-            m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
-            camera_frames = frame_graph[camera_idx][0][m]
+        #     camera_idx = frameidx_list[ix]
+        #     m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
+        #     camera_frames = frame_graph[camera_idx][0][m]
 
-            intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
-            frames = np.isin(frameidx_list, intersect).nonzero()[0]
+        #     intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
+        #     frames = np.isin(frameidx_list, intersect).nonzero()[0]
 
-            if np.count_nonzero(frames[frames > ix]):
-                ix = np.random.choice(frames[frames > ix])
+        #     if np.count_nonzero(frames[frames > ix]):
+        #         ix = np.random.choice(frames[frames > ix])
             
-            elif np.count_nonzero(frames):
-                ix = np.random.choice(frames)
+        #     elif np.count_nonzero(frames):
+        #         ix = np.random.choice(frames)
             
-            inds += [ ix ]
-        # inds = [0, 1, 3, 4, 5, 7]
+        #     inds += [ ix ]
+        inds = [10, 12, 13, 14, 15, 16]
         inds = np.array(inds)
 
         print('scene is {}'.format(scene_id))
