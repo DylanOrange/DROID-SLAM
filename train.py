@@ -107,9 +107,7 @@ def step(model, item, mode, logger, skip):
                                                                                             objectmasks, highmask, disp0, disps, highdisps, intrinsics, trackinfo,\
                                                                                          graph, num_steps=args.iters, fixedp=2)
             geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
-
             Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
-
             static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
 
             error_lowflow, error_dylow, error_induced_low, error_lowdepth, \
@@ -117,26 +115,26 @@ def step(model, item, mode, logger, skip):
             = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
                                 objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
                 
-            loss = args.w1 * geo_loss[1] + args.w1 * Obgeo_loss[1] + \
-                args.w2 * static_resi_loss[1] +\
-                args.w3 * error_highflow + args.w3 * error_induced_high +\
-                10*args.w3 * error_highdepth + 10*args.w3 * error_dyhigh
+            loss = args.w1 * geo_loss[0] + args.w1 * Obgeo_loss[0] + \
+                args.w2 * static_resi_loss[0] +\
+                args.w3 * error_lowflow + args.w3 * error_induced_low +\
+                10*args.w3 * error_lowdepth + 10*args.w3 * error_dylow
             
             loss.backward()
 
-        Gs = poses_est[1][-1].detach()
-        ObjectGs = objectposes_est[1][-1].detach()
+        Gs = poses_est[0][-1].detach()
+        ObjectGs = objectposes_est[0][-1].detach()
         # disp0 = disps_est[-1][:,:,3::8,3::8].detach()
         disp0 = disps_est[0][-1].detach()
 
         if skip:
-            if flow_metrics['abs_low_dyna_error'] > 1.2*flow_metrics['abs_low_error'] and Obgeo_metrics[1]['high_ob_rot_error'] > 0.5:
+            if flow_metrics['abs_low_dyna_error'] > 1.2*flow_metrics['abs_low_error'] and Obgeo_metrics[1]['ob_rot_error'] > 0.5:
                 print('bad optimization!')
                 return True
 
     metrics = {}
 
-    for index in range(2):
+    for index in range(len(poses_est)):
         metrics.update(geo_metrics[index])
         metrics.update(Obgeo_metrics[index])
         metrics.update(static_resid_metrics[index])
@@ -145,18 +143,18 @@ def step(model, item, mode, logger, skip):
     loss = {
         'geo_loss':geo_loss[0].item(),
         'Obgeo_loss':Obgeo_loss[0].item(),
-        'high_geo_loss':geo_loss[1].item(),
-        'high_Obgeo_loss':Obgeo_loss[1].item(),
+        # 'high_geo_loss':geo_loss[1].item(),
+        # 'high_Obgeo_loss':Obgeo_loss[1].item(),
 
         'error_lowflow':error_lowflow.item(),
-        'error_highflow':error_highflow.item(), 
+        # 'error_highflow':error_highflow.item(), 
         'error_induced_low':error_induced_low.item(), 
-        'error_induced_high':error_induced_high.item(), 
+        # 'error_induced_high':error_induced_high.item(), 
 
         'error_lowdepth':error_lowdepth.item(),
-        'error_highdepth':error_highdepth.item(), 
+        # 'error_highdepth':error_highdepth.item(), 
         'error_dylow':error_dylow.item(), 
-        'error_dyhigh':error_dyhigh.item(), 
+        # 'error_dyhigh':error_dyhigh.item(), 
     }
     metrics.update(loss)
 
@@ -256,15 +254,15 @@ def train(args):
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='overfit', help='name your experiment')
+    parser = argparse.ArgumentParser() 
+    parser.add_argument('--name', default='lowck', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=[[10,10]])
+    parser.add_argument('--iters', type=int, default=[[12,12]])
     parser.add_argument('--steps', type=int, default=80000)
     parser.add_argument('--lr', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=2.5)

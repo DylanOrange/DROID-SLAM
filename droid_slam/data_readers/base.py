@@ -229,9 +229,9 @@ class RGBDDataset(data.Dataset):
     def __getitem__(self, index):
         """ return training video """
 
-        # index = index % len(self.dataset_index)
+        index = index % len(self.dataset_index)
 
-        index = 0
+        # index = 0
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
         objectgraph = objectinfo[trackid][3]
@@ -267,17 +267,18 @@ class RGBDDataset(data.Dataset):
                 ix = np.random.choice(frames)
             
             inds += [ ix ]
-
+        # inds = [0, 1, 3, 4, 5, 7]
         inds = np.array(inds)
 
-        # print('scene is {}'.format(scene_id))
-        # print('trackid is {}'.format(trackid))
-        # print('frames are {}'.format(frameidx_list[inds]))
-        # for i in range(len(inds)-1):
-        #     camera_frame = frameidx_list[inds[i]]
-        #     next_ca_fream = frameidx_list[inds[i+1]]
-        #     print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
-        #     print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_fream]))
+        print('scene is {}'.format(scene_id))
+        print('trackid is {}'.format(trackid))
+        print('frames are {}'.format(inds))
+        print('camera frames are {}'.format(frameidx_list[inds]))
+        for i in range(len(inds)-1):
+            camera_frame = frameidx_list[inds[i]]
+            next_ca_fream = frameidx_list[inds[i+1]]
+            print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
+            print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_fream]))
         
         # inds =np.sort(inds)
 
@@ -332,6 +333,7 @@ class RGBDDataset(data.Dataset):
 
         if self.aug is not None:
             highimages = self.aug(images)
+        # highimages = images
 
         lowimages = torch.nn.functional.interpolate(highimages, size = (self.h1//2,self.w1//2), mode = 'bilinear')
 

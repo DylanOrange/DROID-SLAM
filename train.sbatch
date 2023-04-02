@@ -7,6 +7,6 @@
 #SBATCH --time=24:00:00
 #SBATCH --mail-type=NONE
 #SBATCH --no-requeue
-#SBATCH --output=/storage/slurm/lud/logs/training/training.out
-#SBATCH --error=/storage/slurm/lud/logs/training/training.out
+#SBATCH --output=/storage/slurm/lud/logs/training/training-%j.out
+#SBATCH --error=/storage/slurm/lud/logs/training/training-%j.out
 srun python train.py

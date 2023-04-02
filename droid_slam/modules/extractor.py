@@ -198,25 +198,25 @@ class BasicEncoder(nn.Module):
         x = self.relu1(x)
 
         x = self.layer1(x)
-        enc_out1 = pops.crop(x, corners[0], recs[0])#6,32,120,404
+        enc_out1 = pops.crop(x, corners[0], recs[0])#6,32,15,23
 
         x = self.layer2(x)
-        enc_out2 = pops.crop(x, corners[1], recs[1])#6,64,60,202
+        enc_out2 = pops.crop(x, corners[1], recs[1])#6,64,7,11
 
         x = self.layer3(x)
         x = self.conv2(x)
-        enc_out3 = pops.crop(x, corners[2], recs[2])#6,128,30,101
+        enc_out3 = pops.crop(x, corners[2], recs[2])#6,128,2,5
 
         cur_h, cur_w = enc_out2.shape[-2:]
-        enc_out3_resized = TF.resize(enc_out3, (cur_h, cur_w))#6,128,60,202
-        up2layer_input = torch.cat((enc_out3_resized, enc_out2), dim=1)#6,128+64,60,202
-        up2_out = self.up_layer2(up2layer_input)#2,128,48,156
+        enc_out3_resized = TF.resize(enc_out3, (cur_h, cur_w))#6,128,7,11
+        up2layer_input = torch.cat((enc_out3_resized, enc_out2), dim=1)#6,128+64,7,11
+        up2_out = self.up_layer2(up2layer_input)#6,128,7,11
 
         # uplayer1:
         cur_h, cur_w = enc_out1.size()[-2:]
-        up2_out_resized = TF.resize(up2_out, (cur_h, cur_w))#6,64,120,404
-        up1layer_input = torch.cat((up2_out_resized, enc_out1), dim=1)
-        up1_out = self.up_layer1(up1layer_input)#6,32,120,404
+        up2_out_resized = TF.resize(up2_out, (cur_h, cur_w))#6,128,15,23
+        up1layer_input = torch.cat((up2_out_resized, enc_out1), dim=1)#6,128+32,15,23
+        up1_out = self.up_layer1(up1layer_input)#6,128,15,23
 
         _, c2, h2, w2 = x.shape
         return x.view(b, n, c2, h2, w2), up1_out[None]

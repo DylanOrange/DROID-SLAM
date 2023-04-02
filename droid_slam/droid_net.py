@@ -45,10 +45,13 @@ def upsample_flow(flow, mask, time, disps = None):
     mask = mask.view(batch*num, -1, ht, wd)
     return cvx_upsample(flow, mask, time, disps).view(batch, num, time*ht, time*wd, dim)
 
-def upsample4(flow, mode = 'nearest'):
+def upsample4(flow, disps = None):
     B, N, ht, wd, ch = flow.shape
     flow = flow.permute(0,1,4,2,3).reshape(B*N, ch, ht, wd)
-    upsampled_flow = 4*F.interpolate(flow, scale_factor=4, mode=mode)
+    if not disps:
+        upsampled_flow = 4*F.interpolate(flow, scale_factor=4, mode='bilinear', align_corners=True)
+    else:
+        upsampled_flow = F.interpolate(flow, scale_factor=4, mode='nearest', align_corners=True)
     upsampled_flow = upsampled_flow.permute(0,2,3,1).reshape(B, N, 4*ht, 4*wd, ch)
     return  upsampled_flow
 
@@ -251,7 +254,7 @@ class DroidNet(nn.Module):
 
         all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, all_static_residual_list = [], [], [], [], []
 
-        for index in range(2):
+        for index in range(1):
             print('optimzation {}'.format(index))
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
             # corr_fn = AltCorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=3, radius=3)
@@ -301,6 +304,7 @@ class DroidNet(nn.Module):
 
                 # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
                 # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
+                print('begin BA!')
                 for i in range(2):
                     Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
                                                     eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
@@ -325,7 +329,6 @@ class DroidNet(nn.Module):
             if index == 1:
                 break
 
-            images = pops.crop(lowimages.permute(0,1,3,4,2), corners[0], recs[0]).permute(0,1,4,2,3)
             objectmasks = pops.crop(highmasks, corners[0], recs[0])
 
             upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
@@ -333,7 +336,7 @@ class DroidNet(nn.Module):
 
             upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
 
-            coords0 = pops.coords_grid(recs[0][0], recs[0][1], device=images.device)
+            coords0 = pops.coords_grid(recs[0][0], recs[0][1], device=coords1.device)
             coords1 = pops.crop(upsampled_flow, corners[0], recs[0]) + coords0
 
             intrinsics[...,:] *= 4
@@ -343,7 +346,6 @@ class DroidNet(nn.Module):
             # gtflow = pops.crop(highgtflow, corners[0], recs[0]) + coords0
             # gtmask = pops.crop(highmask, corners[0], recs[0])
             # disps = pops.crop(highgtdisps, corners[0], recs[0])
-        
 
             # flow = (lowgtflow - coords0).squeeze(0)
             # upsampled_flow = 4*F.interpolate(flow.permute(0,3,1,2), scale_factor=4, mode='bilinear', align_corners=True).permute(0,2,3,1)
