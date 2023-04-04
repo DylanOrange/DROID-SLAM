@@ -17,6 +17,7 @@ from geom.graph_utils import graph_to_edge_list, keyframe_indicies
 from geom.flow_vis_utils import flow_to_image
 
 from torch_scatter import scatter_mean
+import os
 
 
 def cvx_upsample(data, mask, time, disps = None):
@@ -51,9 +52,9 @@ def upsample4(flow, disps = None):
     if not disps:
         upsampled_flow = 4*F.interpolate(flow, scale_factor=4, mode='bilinear', align_corners=True)
     else:
-        upsampled_flow = F.interpolate(flow, scale_factor=4, mode='nearest', align_corners=True)
+        upsampled_flow = F.interpolate(flow, scale_factor=4, mode='nearest')
     upsampled_flow = upsampled_flow.permute(0,2,3,1).reshape(B, N, 4*ht, 4*wd, ch)
-    return  upsampled_flow
+    return upsampled_flow
 
 class GraphAgg(nn.Module):
     def __init__(self):
@@ -220,7 +221,7 @@ class DroidNet(nn.Module):
 
 
     def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, lowimages, objectmasks, highmasks, \
-                disps, gtdisps, highgtdisps, intrinsics, trackinfo, graph=None, num_steps=12, fixedp=2):
+                disps, gtdisps, midasdisps, highgtdisps, intrinsics, trackinfo, a, b, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
         #Ps is ground truth
         corners = [x[0] for x in trackinfo['corner']]
@@ -254,7 +255,7 @@ class DroidNet(nn.Module):
 
         all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, all_static_residual_list = [], [], [], [], []
 
-        for index in range(1):
+        for index in range(2):
             print('optimzation {}'.format(index))
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
             # corr_fn = AltCorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=3, radius=3)
@@ -329,15 +330,19 @@ class DroidNet(nn.Module):
             all_flow_list.append(flow_list)
 
             if index == 1:
+                for i in range(disp_list[-1].shape[1]):
+                    write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'pred_cropdepth'), \
+                            1/(disp_list[-1][0,i].detach().cpu().numpy()), False)
                 break
 
             objectmasks = pops.crop(highmasks, corners[0], recs[0])
 
-            upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
+            # upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
+            upsampled_disps = upsample4(disps.unsqueeze(-1), True).squeeze(-1)
             disps = pops.crop(upsampled_disps, corners[0], recs[0])
 
-            upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
-
+            # upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
+            upsampled_flow = upsample4(coords1 - coords0, False)
             coords0 = pops.coords_grid(recs[0][0], recs[0][1], device=coords1.device)
             coords1 = pops.crop(upsampled_flow, corners[0], recs[0]) + coords0
 
@@ -347,7 +352,15 @@ class DroidNet(nn.Module):
 
             # gtflow = pops.crop(highgtflow, corners[0], recs[0]) + coords0
             # gtmask = pops.crop(highmask, corners[0], recs[0])
-            # disps = pops.crop(highgtdisps, corners[0], recs[0])
+            gtcropdisps = pops.crop(highgtdisps, corners[0], recs[0])
+            maxdepth = (1.0/highgtdisps).max()
+            for i in range(upsampled_disps.shape[1]):
+                write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_upsampled_depth'), \
+                            ((1/upsampled_disps[0,i]).clamp(max = maxdepth).detach().cpu().numpy()), False)
+                write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_gt_depth'), \
+                            1/(gtcropdisps[0,i].detach().cpu().numpy()), False)
+                write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_gt_highdepth'), \
+                            1/(highgtdisps[0,i].detach().cpu().numpy()), False)
 
             # flow = (lowgtflow - coords0).squeeze(0)
             # upsampled_flow = 4*F.interpolate(flow.permute(0,3,1,2), scale_factor=4, mode='bilinear', align_corners=True).permute(0,2,3,1)
@@ -528,3 +541,38 @@ def depth_vis(disps, mode, max_depth):
 
     for i in range(disps.shape[1]):
         cv2.imwrite('./result/depth/depth' + mode +'_{}.png'.format(i),depth[0,i].astype(np.uint16))
+
+def write_depth(path, depth, grayscale, bits=1):
+    """Write depth map to png file.
+    Args:
+        path (str): filepath without extension
+        depth (array): depth
+        grayscale (bool): use a grayscale colormap?
+    """
+    if not grayscale:
+        bits = 1
+
+    if not np.isfinite(depth).all():
+        depth=np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+        print("WARNING: Non-finite depth values present")
+
+    depth_min = depth.min()
+    depth_max = depth.max()
+
+    max_val = (2**(8*bits))-1
+
+    if depth_max - depth_min > np.finfo("float").eps:
+        out = max_val * (depth - depth_min) / (depth_max - depth_min)
+    else:
+        out = np.zeros(depth.shape, dtype=depth.dtype)
+
+    if not grayscale:
+        out = cv2.applyColorMap(np.uint8(out), cv2.COLORMAP_INFERNO)
+
+    if bits == 1:
+        cv2.imwrite(path + ".png", out.astype("uint8"))
+    elif bits == 2:
+        cv2.imwrite(path + ".png", out.astype("uint16"))
+
+    return
+

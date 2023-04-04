@@ -31,15 +31,16 @@ class VKitti2(RGBDDataset):
     DEPTH_SCALE = 1.0
     split = {
         'train': ('15-deg-left','15-deg-right','30-deg-left'),
-        'val': ('clone'),
-        'test': ('30-deg-right')
+        'val': ('clone',),
+        'test': ('30-deg-right',)
     }
     scene = ['Scene18']
 
     def __init__(self, split_mode='train', **kwargs):
         self.split_mode = split_mode
         self.n_frames = 2
-        super(VKitti2, self).__init__(name='VKitti2', split_mode = 'train', **kwargs)
+        self.midasdepth = '../MiDaS/output'
+        super(VKitti2, self).__init__(name='VKitti2', split_mode = self.split_mode, **kwargs)
 
     @staticmethod
     def is_test_scene(scene):
@@ -62,6 +63,8 @@ class VKitti2(RGBDDataset):
                     glob.glob(osp.join(self.root, scene, split, 'frames/depth/Camera_0/*.png')))
                 instancemasks = sorted(
                     glob.glob(osp.join(self.root, scene, split, 'frames/instanceSegmentation/Camera_0/*.png')))
+                midasdepth = sorted(
+                    glob.glob(osp.join(self.midasdepth, scene, split, '*.pfm')))
                 # 注意camera pose的选择
 
                 objectposepath = osp.join(self.root, scene, split, 'pose.txt')
@@ -102,7 +105,7 @@ class VKitti2(RGBDDataset):
                 # else:
                 #     masks = sorted(
                 #         glob.glob(osp.join(scene, VKitti2.split[self.split_mode], 'frames/dynamicMask/Camera_0/*.npy')))
-                scene_info[scene+'-'+split] = {'images': images, 'depths': depths, 'objectmasks': instancemasks, 
+                scene_info[scene+'-'+split] = {'images': images, 'depths': depths, 'midasdepth':midasdepth,'objectmasks': instancemasks, 
                                         'poses': poses, 'intrinsics': intrinsics, 'graph': graph, 'object': objectinfo}
 
         return scene_info

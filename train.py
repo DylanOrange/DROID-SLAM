@@ -61,7 +61,7 @@ def load_weights(model, weights):
 
 def step(model, item, mode, logger, skip):
 
-    images, lowimages, poses, objectposes, objectmasks, disps, highdisps, highmask, intrinsics, trackinfo, scale = item
+    images, lowimages, poses, objectposes, objectmasks, disps, highdisps, midasdisps, highmask, intrinsics, trackinfo, scale = item
 
     N = disps.shape[1]
 
@@ -83,6 +83,9 @@ def step(model, item, mode, logger, skip):
     ObjectGs.data[:, 1:] = ObjectPs.data[:, [1]].clone()
     disp0 = torch.ones_like(disps)
 
+    a = 1
+    b = (midasdisps-disp0).mean()
+
     r = 0
     while r < args.restart_prob:
         r = rng.random()
@@ -90,45 +93,49 @@ def step(model, item, mode, logger, skip):
         if mode == 'val':
             with torch.no_grad():
                 poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, lowimages, \
-                                                                                               objectmasks, highmask, disp0, disps, highdisps, intrinsics, trackinfo,\
-                                                                                                graph, num_steps=args.iters, fixedp=2)
+                                                                                               objectmasks, highmask, disp0, disps, midasdisps, highdisps, intrinsics.clone(), trackinfo,\
+                                                                                                a, b, graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
                 static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
 
-                error_lowflow, error_dylow, error_induced_low, error_lowdepth, \
-                error_highflow, error_dyhigh, error_induced_high, error_highdepth, flow_metrics, \
+                error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, \
+                error_highflow, error_dyhigh, error_induced_high, error_highdepth, error_highdynadepth, flow_metrics, \
                 = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
                                  objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
                
         else:
             poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, lowimages, \
-                                                                                            objectmasks, highmask, disp0, disps, highdisps, intrinsics, trackinfo,\
-                                                                                         graph, num_steps=args.iters, fixedp=2)
+                                                                                            objectmasks, highmask, disp0, disps, midasdisps, highdisps, intrinsics.clone(), trackinfo,\
+                                                                                         a, b, graph, num_steps=args.iters, fixedp=2)
             geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
             Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
             static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
 
-            error_lowflow, error_dylow, error_induced_low, error_lowdepth, \
-            error_highflow, error_dyhigh, error_induced_high, error_highdepth, flow_metrics, \
+            error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, \
+            error_highflow, error_dyhigh, error_induced_high, error_highdepth, error_highdynadepth, flow_metrics, \
             = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
                                 objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
-                
-            loss = args.w1 * geo_loss[0] + args.w1 * Obgeo_loss[0] + \
+            #10,0.01,0.05   0.05, 0.05, 0.5, 2, 2, 0.05, 0.8
+            #0.5, 0.5, 0.005, 0.1, 0.1, 0.025, 0.4
+            loss = 0.1*(args.w1 * geo_loss[0] + args.w1 * Obgeo_loss[0] + \
                 args.w2 * static_resi_loss[0] +\
-                args.w3 * error_lowflow + args.w3 * error_induced_low +\
-                10*args.w3 * error_lowdepth + 10*args.w3 * error_dylow
+                args.w3 * error_lowflow +\
+                10*args.w3 * error_lowdynadepth) +\
+                args.w1 * geo_loss[1] + args.w1 * Obgeo_loss[1] + \
+                args.w2 * static_resi_loss[1] +\
+                args.w3 * error_highflow +\
+                10*args.w3 * error_highdynadepth
             
             loss.backward()
 
-        Gs = poses_est[0][-1].detach()
-        ObjectGs = objectposes_est[0][-1].detach()
-        # disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+        Gs = poses_est[1][-1].detach()
+        ObjectGs = objectposes_est[1][-1].detach()
         disp0 = disps_est[0][-1].detach()
 
         if skip:
-            if flow_metrics['abs_low_dyna_error'] > 1.2*flow_metrics['abs_low_error'] and Obgeo_metrics[1]['ob_rot_error'] > 0.5:
+            if flow_metrics['abs_high_dyna_error'] > 1.2*flow_metrics['abs_high_error'] and Obgeo_metrics[1]['high_ob_rot_error'] > 0.5:
                 print('bad optimization!')
                 return True
 
@@ -143,18 +150,20 @@ def step(model, item, mode, logger, skip):
     loss = {
         'geo_loss':geo_loss[0].item(),
         'Obgeo_loss':Obgeo_loss[0].item(),
-        # 'high_geo_loss':geo_loss[1].item(),
-        # 'high_Obgeo_loss':Obgeo_loss[1].item(),
+        'high_geo_loss':geo_loss[1].item(),
+        'high_Obgeo_loss':Obgeo_loss[1].item(),
 
         'error_lowflow':error_lowflow.item(),
-        # 'error_highflow':error_highflow.item(), 
-        'error_induced_low':error_induced_low.item(), 
-        # 'error_induced_high':error_induced_high.item(), 
-
         'error_lowdepth':error_lowdepth.item(),
-        # 'error_highdepth':error_highdepth.item(), 
-        'error_dylow':error_dylow.item(), 
-        # 'error_dyhigh':error_dyhigh.item(), 
+        'error_induced_low':error_induced_low.item(), 
+        'error_dylow':error_dylow.item(),
+        'error_lowdynadepth': error_lowdynadepth.item(),
+
+        'error_highflow':error_highflow.item(), 
+        'error_highdepth':error_highdepth.item(), 
+        'error_induced_high':error_induced_high.item(), 
+        'error_dyhigh':error_dyhigh.item(), 
+        'error_highdynadepth': error_highdynadepth.item()
     }
     metrics.update(loss)
 
@@ -222,7 +231,7 @@ def train(args):
             
             total_steps += 1
 
-            if total_steps % 500 == 0:
+            if total_steps % 1 == 0:
                 ##validation
                 model.eval()
                 eval_steps = 0
@@ -234,7 +243,7 @@ def train(args):
                         continue
                     eval_steps += 1
 
-                    if eval_steps == 100:
+                    if eval_steps == 10:
                         model.train()
                         break
 
@@ -256,15 +265,15 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
     parser.add_argument('--name', default='test', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/all_010000.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=[[12,12]])
+    parser.add_argument('--iters', type=int, default=[[1,1]])
     parser.add_argument('--steps', type=int, default=1)
-    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=6)
 
@@ -275,7 +284,7 @@ if __name__ == '__main__':
     parser.add_argument('--fmin', type=float, default=8.0)
     parser.add_argument('--fmax', type=float, default=96.0)
     parser.add_argument('--obfmin', type=float, default=5.0)
-    parser.add_argument('--obfmax', type=float, default=20.0)
+    parser.add_argument('--obfmax', type=float, default=30.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')
     parser.add_argument('--edges', type=int, default=24)
