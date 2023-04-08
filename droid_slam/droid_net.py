@@ -118,12 +118,12 @@ class UpdateModule(nn.Module):
             nn.Conv2d(128, 64, 3, padding=1),
             nn.ReLU(inplace=True))
 
-        self.weight = nn.Sequential(
-            nn.Conv2d(128, 128, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 2, 3, padding=1),
-            GradientClip(),
-            nn.Sigmoid())
+        # self.weight = nn.Sequential(
+        #     nn.Conv2d(128, 128, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(128, 2, 3, padding=1),
+        #     GradientClip(),
+        #     nn.Sigmoid())
 
         # self.dyweight = nn.Sequential(
         #     nn.Conv2d(128, 128, 3, padding=1),
@@ -139,7 +139,7 @@ class UpdateModule(nn.Module):
             GradientClip())
 
         self.gru = ConvGRU(128, 128+128+64)
-        self.agg = GraphAgg()
+        # self.agg = GraphAgg()
 
         # self.mask_flow = nn.Sequential(
         #     nn.Conv2d(128, 256, 3, padding=1),
@@ -171,23 +171,23 @@ class UpdateModule(nn.Module):
 
         ### update variables ###
         delta = self.delta(net).view(*output_dim)
-        weight = self.weight(net).view(*output_dim)
+        # weight = self.weight(net).view(*output_dim)
         # dyweight = self.dyweight(net).view(*output_dim)
         # mask_flow = .25*self.mask_flow(net).view(*output_dim)
         # mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
         delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
-        weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
+        # weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
         # dyweight = dyweight.permute(0,1,3,4,2)[...,:2].contiguous()
 
         net = net.view(*output_dim)
 
-        if ii is not None:
-            eta = self.agg(net, ii.to(net.device))
-            return net, delta, weight, eta
+        # if ii is not None:
+        #     eta = self.agg(net, ii.to(net.device))
+        #     return net, delta, weight, eta
 
-        else:
-            return net, delta, weight
+        # else:
+        return net, delta
 
 
 class DroidNet(nn.Module):
@@ -253,6 +253,21 @@ class DroidNet(nn.Module):
         all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, all_static_residual_list = [], [], [], [], []
 
         objectmasks_list, weight_list, all_weight_list, valid_list, intrinsics_list = [], [], [], [], []
+
+        print('-----')
+        print('before optimization')
+        loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+        ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+
+        print('geo loss is {}'.format(loss.item()))
+        print('r_err is {}'.format(r_err.item()))
+        print('t_err is {}'.format(t_err.item()))
+
+        print('ob_loss is {}'.format(ob_loss.item()))
+        print('ob_r_err is {}'.format(ob_r_err.item()))
+        print('ob_t_err is {}'.format(ob_t_err.item()))
+        print('-----')
+        
         for index in range(2):
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
 
@@ -276,18 +291,19 @@ class DroidNet(nn.Module):
                 motion = torch.cat([flow, resd], dim=-1)
                 motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
-                net, delta, weight, eta = \
+                net, delta = \
                     self.update(net, inp, corr, motion, ii, jj)
 
                 # print('predicted weight is {}'.format(weight.mean().item()))
-                # print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
+                print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
                 target = coords1 + delta
+                print('predicted flow delta is {}'.format(delta.mean().item()))
                 # for i in range(2):
                 #     Gs, ObjectGs, a, b, midasdisps = midasBA(gtflow, gtmask, ObjectGs, objectmasks, trackinfo, validmask, \
                 #                                     eta, Gs, gtdisps, midasdisps, intrinsics, ii, jj, a, b, fixedp=2)
                 for i in range(2):
-                    Gs, ObjectGs,disps = dynamicBA(target, weight*depth_valid, ObjectGs, objectmasks, trackinfo, validmask, \
-                                                    eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                    Gs, ObjectGs = dynamicBA(target, depth_valid, ObjectGs, objectmasks, trackinfo, validmask, \
+                                                    None, Gs, disps, intrinsics, ii, jj, fixedp=2)
                 # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
                 coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
                                                                     validmask, ObjectGs, objectmasks)
@@ -298,20 +314,21 @@ class DroidNet(nn.Module):
                 disp_list.append(disps)
                 static_residual_list.append(static_residual)
                 flow_list.append(target)
-                weight_list.append(weight)
+                # weight_list.append(weight)
             
-            # print('-----')
-            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+            print('-----')
+            print('after optimization')
+            loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+            ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
 
-            # print('geo loss is {}'.format(loss.item()))
-            # print('r_err is {}'.format(r_err.item()))
-            # print('t_err is {}'.format(t_err.item()))
+            print('geo loss is {}'.format(loss.item()))
+            print('r_err is {}'.format(r_err.item()))
+            print('t_err is {}'.format(t_err.item()))
 
-            # print('ob_loss is {}'.format(ob_loss.item()))
-            # print('ob_r_err is {}'.format(ob_r_err.item()))
-            # print('ob_t_err is {}'.format(ob_t_err.item()))
-            # print('-----')
+            print('ob_loss is {}'.format(ob_loss.item()))
+            print('ob_r_err is {}'.format(ob_r_err.item()))
+            print('ob_t_err is {}'.format(ob_t_err.item()))
+            print('-----')
 
             intrinsics_list.append(intrinsics)
             all_weight_list.append(weight_list)

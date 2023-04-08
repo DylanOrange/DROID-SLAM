@@ -279,8 +279,8 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
     #     cv2.imwrite('./result/objectflow/prelowdepth_{}.png'.format(i),prelowdepth[0,i].astype(np.uint16))
     
     #depth evaluation for the last optimization
-    # print('low disps mean is {}'.format(disps_est[0][-1].mean()))
-    # print('high disps mean is {}'.format(disps_est[1][-1].mean()))
+    print('low disps mean is {}'.format(disps_est[0][-1].mean()))
+    print('high disps mean is {}'.format(disps_est[1][-1].mean()))
     s_disps_est = disps_est[1][-1]* scale
     s_low_dispest = disps_est[0][-1] * scale
 

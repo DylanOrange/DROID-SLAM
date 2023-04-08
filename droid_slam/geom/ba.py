@@ -542,13 +542,13 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, \
         objectmask = objectmask, Jacobian = True, batch = False)
 
-    # r = (target - coords)*valid
-    # residual = r[valid[..., 0]!=0.0]
-    # print('residual is {}'.format(torch.mean((torch.abs(residual)))))
+    r = (target - coords)
+    residual = r[(valid)[..., 0]!=0.0]
+    print('residual is {}'.format(torch.mean((torch.abs(residual)))))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
-    w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
-    # w = .001*valid.repeat(1,1,1,1,2).view(B,N,-1,1)
+    # w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
+    w = .001*(valid).repeat(1,1,1,1,2).view(B,N,-1,1)
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
@@ -581,54 +581,54 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     H = torch.matmul(wh.transpose(1,2), h)###weight乘了两次！！！
     H = H.view(B, U, D, U, D).transpose(2,3)
 
-    Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
+    # Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
     # Jz = torch.zeros_like(Jz)
 
-    Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
-    Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
+    # Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
+    # Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
 
-    Eoi = ((w*Joi).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
-    Eoj = ((w*Joj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
+    # Eoi = ((w*Joi).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
+    # Eoj = ((w*Joj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
 
-    w = w.view(B, N, ht*wd, -1)#1,14,3030,2
-    r = r.view(B, N, ht*wd, -1)#1,14,3030,2
-    wk = torch.sum(w*r*Jz, dim=-1)#1,18,3030
-    Ck = torch.sum(w*Jz*Jz, dim=-1)#1,18,3030
-    kx, kk = torch.unique(ii, return_inverse=True)#
-    M = kx.shape[0]#5
+    # w = w.view(B, N, ht*wd, -1)#1,14,3030,2
+    # r = r.view(B, N, ht*wd, -1)#1,14,3030,2
+    # wk = torch.sum(w*r*Jz, dim=-1)#1,18,3030
+    # Ck = torch.sum(w*Jz*Jz, dim=-1)#1,18,3030
+    # kx, kk = torch.unique(ii, return_inverse=True)#
+    # M = kx.shape[0]#5
 
-    Ec = safe_scatter_add_mat(Eci, ii, kk, P, M) + \
-        safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,15,6,3030
+    # Ec = safe_scatter_add_mat(Eci, ii, kk, P, M) + \
+    #     safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,15,6,3030
 
-    Eo = safe_scatter_add_mat(Eoi, ii, kk, P, M) + \
-        safe_scatter_add_mat(Eoj, jj, kk, P , M)#6,15,6,3030
+    # Eo = safe_scatter_add_mat(Eoi, ii, kk, P, M) + \
+    #     safe_scatter_add_mat(Eoj, jj, kk, P , M)#6,15,6,3030
 
-    C = safe_scatter_add_vec(Ck, kk, M)#1,5,3030
-    w = safe_scatter_add_vec(wk, kk, M)#1,5,3030 
+    # C = safe_scatter_add_vec(Ck, kk, M)#1,5,3030
+    # w = safe_scatter_add_vec(wk, kk, M)#1,5,3030 
 
-    # C = C + 1e-7 #eta, 5,30,101
-    C = C + eta.view(*C.shape) + 1e-7
+    # # C = C + 1e-7 #eta, 5,30,101
+    # C = C + eta.view(*C.shape) + 1e-7
 
-    Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
-    Eo = Eo.view(B, N_car, P, M, D, ht*wd)#6,3,5,6,30*101
+    # Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
+    # Eo = Eo.view(B, N_car, P, M, D, ht*wd)#6,3,5,6,30*101
 
-    E = torch.cat((Ec, Eo[:, 0, app[fixedp:]]), dim=1)
+    # E = torch.cat((Ec, Eo[:, 0, app[fixedp:]]), dim=1)
 
-    # ## 3: solve the system ###
-    dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
-    # print('update value is {}'.format(dx.mean().item()))
+    # # ## 3: solve the system ###
+    # dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
 
-    # dx = block_solve(H, v)
+    dx = block_solve(H, v)
+    print('update value is {}'.format(dx.mean().item()))
 
     P = P-fixedp
     poses = pose_retr(poses, dx[:,:P], torch.arange(P).to(device=dx.device) + fixedp)
     objectposes = pose_retr(objectposes, dx[:, P:], app[fixedp:])
 
-    disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
-    disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
-    disps = disps.clamp(min=0.0)
+    # disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
+    # disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
+    # disps = disps.clamp(min=0.0)
     
-    return poses, objectposes, disps
+    return poses, objectposes
 
 def dynamictestBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 

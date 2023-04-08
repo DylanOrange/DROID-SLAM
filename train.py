@@ -51,8 +51,8 @@ def load_weights(model, weights):
     # for key in state_dict.keys():
     #     state_dict.update({key.split('.', 1)[1]:state_dict.pop(key)})
 
-    state_dict["update.weight.2.weight"] = state_dict["update.weight.2.weight"][:2]
-    state_dict["update.weight.2.bias"] = state_dict["update.weight.2.bias"][:2]
+    # state_dict["update.weight.2.weight"] = state_dict["update.weight.2.weight"][:2]
+    # state_dict["update.weight.2.bias"] = state_dict["update.weight.2.bias"][:2]
     state_dict["update.delta.2.weight"] = state_dict["update.delta.2.weight"][:2]
     state_dict["update.delta.2.bias"] = state_dict["update.delta.2.bias"][:2]
 
@@ -108,7 +108,7 @@ def step(model, item, mode, logger, skip, save, total_steps):
         if mode == 'val':
             with torch.no_grad():
                 poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, lowimages, \
-                                                                                               objectmasks, highmask, disp0, disps, midasdisps, highdisps, intrinsics.clone(), trackinfo,\
+                                                                                               objectmasks, highmask, disps, disps, midasdisps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                                 a, b, depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
@@ -122,7 +122,7 @@ def step(model, item, mode, logger, skip, save, total_steps):
                
         else:
             poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, lowimages, \
-                                                                                            objectmasks, highmask, disp0, disps, midasdisps, highdisps, intrinsics.clone(), trackinfo,\
+                                                                                            objectmasks, highmask, disps, disps, midasdisps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                          a, b, depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
             geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
             Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
@@ -234,21 +234,21 @@ def train(args):
 
             optimizer.zero_grad()
 
-            if total_steps % 200 == 0:
-                save = True
-            if step(model, item, 'train', logger, skip, save, total_steps):
-                save = False
-                print('jump train!')
-                continue
+            # if total_steps % 200 == 0:
+            #     save = True
+            # if step(model, item, 'train', logger, skip, save, total_steps):
+            #     save = False
+            #     print('jump train!')
+            #     continue
             
-            save = False
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            optimizer.step()
-            scheduler.step()
+            # save = False
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+            # optimizer.step()
+            # scheduler.step()
             
             total_steps += 1
 
-            if total_steps % 500 == 0:
+            if total_steps % 1 == 0:
                 ##validation
                 model.eval()
                 eval_steps = 0
@@ -281,15 +281,15 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='droidck', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
+    parser.add_argument('--name', default='test', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/gtdepth_flow_woweightwock_036000.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=10)
-    parser.add_argument('--steps', type=int, default=80000)
+    parser.add_argument('--steps', type=int, default=1)
     parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=6)
