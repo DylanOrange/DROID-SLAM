@@ -71,6 +71,8 @@ def iproj(disps, intrinsics, jacobian=False, batch_grid = None):
     if jacobian:
         J = torch.zeros_like(pts)
         J[...,-1] = 1.0
+        # Ja = -J*disps[..., None]*disps[..., None]
+        # Jb = Ja/midasdisps[..., None]
         return pts, J
 
     return pts, None
@@ -229,7 +231,8 @@ def dyactp(Gij, X0, Gijobject = None, objectmask = None, fullmask  = None, jacob
 
     return X1, None
 
-def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, objectposes = None, objectmask = None, Jacobian = False, return_depth = False, batch = False, batch_grid = None):
+def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, objectposes = None, \
+                           objectmask = None, Jacobian = False, return_depth = False, batch = False, batch_grid = None, midasdisps = None):
     """ map points from ii->jj """
     
     #输入前面都有Batch 1，除了Objectmask
@@ -283,6 +286,10 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
             # Jz = torch.cat(((Gij[:, :, None, None] * Jz) * (1 - fullmask[..., None]), (Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None]), dim=0)
 
         Jz = torch.matmul(Jp1, Jz.unsqueeze(-1))
+        # Jb = Jz.clone()
+        # Ja = Jz*midasdisps[:,ii,..., None, None]
+        # Jb = -Jz*depths[:,ii,..., None, None]*depths[:,ii,..., None, None]
+        # Ja = Jb/midasdisps[:,ii,..., None, None]
 
         return x1, valid, (Jci, Jcj, Joi, Joj, Jz)
 

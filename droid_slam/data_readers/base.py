@@ -409,26 +409,29 @@ class RGBDDataset(data.Dataset):
 
         #normalize
         midasdepths = torch.nn.functional.interpolate(midasdepths[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
-        
         disps = 1.0/depths
         highdisps = 1.0/highdepths
-        midasdisps = 1.0/midasdepths
 
-        m_s = midasdisps[midasdisps>0].mean()
-        midasdisps = midasdisps / m_s
+        m_s = midasdepths[midasdepths>0].mean()
+        midasdepths = midasdepths / m_s
             
         batchgrid = batch_grid(corners[0], recs[0])
         Apperance = [torch.arange(self.n_frames)]
         trackinfo = {
             'trackid': torch.tensor([trackid]).to('cuda'),
             'apperance': [x.to('cuda') for x in Apperance],
-            # 'n_app': N_app,
-            'frames': frameidx_list[inds],
+            'frames': torch.from_numpy(frameidx_list[inds]).to('cuda'),
             'corner': [x.to('cuda') for x in corners],
             'rec': [x.to('cuda') for x in recs],
             'grid': tuple(t.to('cuda') for t in batchgrid)
         }
 
+        depth_valid = (0.2<1/disps)*(1/disps<50)
+        high_depth_valid = (0.2<1/highdisps)*(1/highdisps<50)
+        
+        # disps = (disps - disps.min()) / (disps.max() - disps.min())
+        # midasdepths = (midasdepths - midasdepths.min()) / (midasdepths.max() - midasdepths.min())
+        
         if len(disps[disps>0.01]) > 0:
             s = disps[disps>0.01].mean()
             disps = disps / s
@@ -436,9 +439,41 @@ class RGBDDataset(data.Dataset):
             poses[...,:3] *= s
             objectposes[...,:3] *= s
 
+        a1_list, b1_list = [], []
+        for i in range(disps.shape[0]):
+            # write_depth('result/val/midas'+str(frameidx_list[inds][i]), midasdepths[i].numpy(), False)
+            # write_depth('result/val/gt'+str(frameidx_list[inds][i]), disps[i].numpy(), False)
+            m_depth = (disps[i])[depth_valid[i]].median()
+            m_midas = (midasdepths[i])[depth_valid[i]].median()
+            a1 = m_depth/m_midas
+            b1 = ((disps[i])[depth_valid[i]] - a1*(midasdepths[i])[depth_valid[i]]).mean()
+            a1_list.append(a1)
+            b1_list.append(b1)
+
+        # a_list, b_list = [], []
+        # for i in range(disps.shape[0]):
+        #     write_depth('result/val/midas'+str(frameidx_list[inds][i]), midasdepths[i].numpy(), False)
+        #     write_depth('result/val/gt'+str(frameidx_list[inds][i]), disps[i].numpy(), False)
+        #     depth = disps[i].reshape(-1)
+        #     midepth = midasdepths[i].reshape(-1)
+
+        #     midepth = torch.stack((midepth, torch.ones_like(midepth)), dim=1)
+        #     left = torch.linalg.inv(torch.matmul(midepth.transpose(1,0), midepth))
+        #     right = torch.matmul(midepth.transpose(1,0), depth)
+        #     solve = torch.matmul(left, right)
+        #     a, b = solve[0], solve[1]
+        #     depth_s = a*midepth[:,0]+b
+        #     re_error = ((depth - depth_s)).abs().mean()
+        #     print('relative error is {}'.format(re_error))
+        #     a_list.append(a)
+        #     b_list.append(b)
+        a = torch.stack(a1_list, dim=0)[..., None, None]
+        b = torch.stack(b1_list, dim=0)[..., None, None]
+
         return highimages.to('cuda'), lowimages.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), \
-            objectmasks.to('cuda'), disps.to('cuda'), highdisps.to('cuda'), midasdisps.to('cuda'),\
-            mask.to('cuda'), intrinsics.to('cuda'), trackinfo, s.to('cuda')
+            objectmasks.to('cuda'), disps.to('cuda'), highdisps.to('cuda'), midasdepths.to('cuda'),\
+            mask.to('cuda'), intrinsics.to('cuda'), trackinfo, s.to('cuda'), a.to('cuda'), b.to('cuda'), \
+            depth_valid.to('cuda'), high_depth_valid.to('cuda')
 
     def __len__(self):
         return len(self.dataset_index)
@@ -452,3 +487,39 @@ def depth_vis(disps, mode, max_depth):
 
     for i in range(disps.shape[0]):
         cv2.imwrite('./result/depth/depth' + mode +'_{}.png'.format(i),depth[i].astype(np.uint16))
+
+def write_depth(path, depth, grayscale, bits=1):
+    """Write depth map to png file.
+    Args:
+        path (str): filepath without extension
+        depth (array): depth
+        grayscale (bool): use a grayscale colormap?
+    """
+    if not grayscale:
+        bits = 1
+
+    if not np.isfinite(depth).all():
+        depth=np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+        print("WARNING: Non-finite depth values present")
+
+    depth_min = depth.min()
+    depth_max = depth.max()
+
+    max_val = (2**(8*bits))-1
+
+    if depth_max - depth_min > np.finfo("float").eps:
+        out = max_val * (depth - depth_min) / (depth_max - depth_min)
+    else:
+        out = np.zeros(depth.shape, dtype=depth.dtype)
+
+    if not grayscale:
+        out = cv2.applyColorMap(np.uint8(out), cv2.COLORMAP_INFERNO)
+
+    if bits == 1:
+        cv2.imwrite(path + ".png", out.astype("uint8"))
+    elif bits == 2:
+        cv2.imwrite(path + ".png", out.astype("uint16"))
+
+    return
+
+

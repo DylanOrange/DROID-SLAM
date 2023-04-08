@@ -29,7 +29,7 @@ class CholeskySolver(torch.autograd.Function):
 
         return dH, dz
 
-def block_solve(H, b, ep=0.0001, lm=0.0001):
+def block_solve(H, b, ep=0.1, lm=0.0001):
     """ solve normal equations """
     B, N, _, D, _ = H.shape
     H = H.permute(0,1,3,2,4).reshape(B, N*D, N*D)
@@ -44,7 +44,7 @@ def block_solve(H, b, ep=0.0001, lm=0.0001):
     return x.reshape(B, N, D)
 
 
-def schur_solve(H, E, C, v, w, ep=0.0001, lm=0.0001, sless=False):
+def schur_solve(H, E, C, v, w, ep=0.1, lm=0.0001, sless=False):
     """ solve using shur complement """
     
     B, P, M, D, HW = E.shape

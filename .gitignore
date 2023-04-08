@@ -157,4 +157,5 @@ figures/*.pdf
 *.png
 *.npy
 copy
+*.pkl
 

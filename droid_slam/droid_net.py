@@ -10,7 +10,7 @@ from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
 from lietorch import SE3, SO3, Sim3
-from geom.ba import BA, dynamicBA, fulldynamicBA, cameraBA
+from geom.ba import BA, dynamicBA, fulldynamicBA, cameraBA, midasBA
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
@@ -18,6 +18,7 @@ from geom.flow_vis_utils import flow_to_image
 
 from torch_scatter import scatter_mean
 import os
+import pickle as pk
 
 
 def cvx_upsample(data, mask, time, disps = None):
@@ -71,8 +72,8 @@ class GraphAgg(nn.Module):
         # self.upmask_flow = nn.Sequential(
         #     nn.Conv2d(128, 4*4*9, 1, padding=0))
 
-        self.upmask_disp = nn.Sequential(
-            nn.Conv2d(128, 4*4*9, 1, padding=0))
+        # self.upmask_disp = nn.Sequential(
+        #     nn.Conv2d(128, 4*4*9, 1, padding=0))
 
     def forward(self, net, ii):
         batch, num, ch, ht, wd = net.shape
@@ -95,10 +96,10 @@ class GraphAgg(nn.Module):
         # net_more = net[less_size:]
 
         eta = self.eta(net).view(batch, -1, ht, wd)
-        upmask_disp = self.upmask_disp(net).view(batch, -1, 4*4*9, ht, wd)
+        # upmask_disp = self.upmask_disp(net).view(batch, -1, 4*4*9, ht, wd)
         # upmask_flow = self.upmask_flow(net_more).view(batch, -1, 4*4*9, ht, wd)#1,14,576,30,101
 
-        return .01 * eta, upmask_disp
+        return .01 * eta
 
 class UpdateModule(nn.Module):
     def __init__(self):
@@ -140,10 +141,10 @@ class UpdateModule(nn.Module):
         self.gru = ConvGRU(128, 128+128+64)
         self.agg = GraphAgg()
 
-        self.mask_flow = nn.Sequential(
-            nn.Conv2d(128, 256, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 4*4*9, 1, padding=0))
+        # self.mask_flow = nn.Sequential(
+        #     nn.Conv2d(128, 256, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(256, 4*4*9, 1, padding=0))
 
         # self.mask_weight = nn.Sequential(
         #     nn.Conv2d(128, 128, 3, padding=1),
@@ -172,7 +173,7 @@ class UpdateModule(nn.Module):
         delta = self.delta(net).view(*output_dim)
         weight = self.weight(net).view(*output_dim)
         # dyweight = self.dyweight(net).view(*output_dim)
-        mask_flow = .25*self.mask_flow(net).view(*output_dim)
+        # mask_flow = .25*self.mask_flow(net).view(*output_dim)
         # mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
         delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
@@ -182,8 +183,8 @@ class UpdateModule(nn.Module):
         net = net.view(*output_dim)
 
         if ii is not None:
-            eta, upmask = self.agg(net, ii.to(net.device))
-            return net, delta, weight, eta, upmask, mask_flow
+            eta = self.agg(net, ii.to(net.device))
+            return net, delta, weight, eta
 
         else:
             return net, delta, weight
@@ -221,7 +222,7 @@ class DroidNet(nn.Module):
 
 
     def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, lowimages, objectmasks, highmasks, \
-                disps, gtdisps, midasdisps, highgtdisps, intrinsics, trackinfo, a, b, graph=None, num_steps=12, fixedp=2):
+                disps, gtdisps, midasdisps, highgtdisps, intrinsics, trackinfo, a, b, depth_valid, high_depth_valid, save, total_steps, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
         #Ps is ground truth
         corners = [x[0] for x in trackinfo['corner']]
@@ -234,19 +235,15 @@ class DroidNet(nn.Module):
 
         validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
-        # highintrinsics = intrinsics.clone()
-        # highintrinsics[...,:] *= 4
-
-        # cropintrinsics = highintrinsics.clone()
-        # cropintrinsics[..., 2] -= corners[0][1]
-        # cropintrinsics[..., 3] -= corners[0][0]
-
         # highcoords0 = pops.coords_grid(120, 404, device=images.device)
 
-        # gtflow, gtmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        gtflow, gtmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        # gtflow = torch.normal(mean=gtflow, std=1e-1)
+        # gtmask = depth_valid[:, ii, ..., None]
+        depth_valid = depth_valid[:, ii, ..., None]
         # highgtflow, highmask = pops.dyprojective_transform(Ps, highgtdisps, highintrinsics, ii, jj, validmask, ObjectPs, highmasks)
         # highgtflow -= highcoords0
-        
+        # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
         fmaps, net_all, inp_all = self.extract_features(images, corners, recs)
 
         ht, wd = images.shape[-2:]
@@ -255,17 +252,16 @@ class DroidNet(nn.Module):
 
         all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, all_static_residual_list = [], [], [], [], []
 
+        objectmasks_list, weight_list, all_weight_list, valid_list, intrinsics_list = [], [], [], [], []
         for index in range(2):
-            print('optimzation {}'.format(index))
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
-            # corr_fn = AltCorrBlock(fmaps[:,ii], fmaps[:,jj], num_levels=3, radius=3)
 
             target = coords1.clone()
             net, inp = net_all[index][:,ii], inp_all[index][:,ii]
 
             Gs_list, disp_list, ObGs_list, flow_list, static_residual_list = [], [], [], [], []
 
-            for step in range(num_steps[0][index]):
+            for step in range(num_steps):
                 Gs = Gs.detach()
                 ObjectGs = ObjectGs.detach()
                 disps = disps.detach()
@@ -280,49 +276,47 @@ class DroidNet(nn.Module):
                 motion = torch.cat([flow, resd], dim=-1)
                 motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
-                net, delta, weight, eta, mask_disp, mask_flow = \
+                net, delta, weight, eta = \
                     self.update(net, inp, corr, motion, ii, jj)
 
+                # print('predicted weight is {}'.format(weight.mean().item()))
+                # print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
                 target = coords1 + delta
-
-                # flow_inter = upsample_flow(target - coords0, mask_flow, 4) + coords_crop
-                # cropweight = upsample_flow(weight, mask_weight,4)
-
-                # flow_inter = highgtflow.clone()
-                # flow_inter = torch.normal(mean=highgtflow, std=1e+0)
-
-                # vis_highmask = highmask.squeeze(-1)
-                # vis_fullmask = fullmasks[:, ii]
-                # flow_inter_vis = flow_to_image(flow_inter[0,0].cpu().numpy(), vis_highmask[0,0].cpu().numpy())
-                # dyna_flow_inter_vis = flow_to_image(flow_inter[0,0].cpu().numpy(), vis_fullmask[0,0].cpu().numpy())
-                # cv2.imwrite('flow_inter_{}.png'.format(0),flow_inter_vis)
-                # cv2.imwrite('dyna_flow_inter_{}.png'.format(0),dyna_flow_inter_vis)
-
-                # cropflow = pops.crop(flow_inter.expand(B,-1,-1,-1,-1), corners, rec)
-                # cropweight = pops.crop(cropweight.expand(B,-1,-1,-1, -1), corners, rec)
-
-                # weight = lowmask.expand(-1,-1,-1,-1,2)
-
-                # upsampled_disps = upsample_flow(disps[..., None], mask_disp, 4, True)
-                # cropdisps = pops.crop(upsampled_disps.expand(B,-1,-1,-1, -1), corners, rec)[..., 0]
-                print('begin BA!')
+                # for i in range(2):
+                #     Gs, ObjectGs, a, b, midasdisps = midasBA(gtflow, gtmask, ObjectGs, objectmasks, trackinfo, validmask, \
+                #                                     eta, Gs, gtdisps, midasdisps, intrinsics, ii, jj, a, b, fixedp=2)
                 for i in range(2):
-                    Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
+                    Gs, ObjectGs,disps = dynamicBA(target, weight*depth_valid, ObjectGs, objectmasks, trackinfo, validmask, \
                                                     eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
-
+                # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
                 coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
                                                                     validmask, ObjectGs, objectmasks)
-                
                 static_residual = (target - coords1)*valid_static
-
-                print('BA residual is {}'.format(static_residual.abs().mean()))
 
                 Gs_list.append(Gs)
                 ObGs_list.append(ObjectGs)
                 disp_list.append(disps)
                 static_residual_list.append(static_residual)
                 flow_list.append(target)
+                weight_list.append(weight)
             
+            # print('-----')
+            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+
+            # print('geo loss is {}'.format(loss.item()))
+            # print('r_err is {}'.format(r_err.item()))
+            # print('t_err is {}'.format(t_err.item()))
+
+            # print('ob_loss is {}'.format(ob_loss.item()))
+            # print('ob_r_err is {}'.format(ob_r_err.item()))
+            # print('ob_t_err is {}'.format(ob_t_err.item()))
+            # print('-----')
+
+            intrinsics_list.append(intrinsics)
+            all_weight_list.append(weight_list)
+            objectmasks_list.append(objectmasks)
+            valid_list.append(depth_valid)
             all_Gs_list.append(Gs_list)
             all_ObGs_list.append(ObGs_list)
             all_disp_list.append(disp_list)
@@ -330,9 +324,12 @@ class DroidNet(nn.Module):
             all_flow_list.append(flow_list)
 
             if index == 1:
-                for i in range(disp_list[-1].shape[1]):
-                    write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'pred_cropdepth'), \
-                            1/(disp_list[-1][0,i].detach().cpu().numpy()), False)
+                if save:
+                    save_debug_result(all_Gs_list, all_ObGs_list, all_disp_list, all_flow_list, valid_list,\
+                                      objectmasks_list, all_weight_list, intrinsics_list, trackinfo, ii, jj, total_steps)
+                # for i in range(disp_list[-1].shape[1]):
+                #     write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'pred_cropdepth'), \
+                #             1/(disp_list[-1][0,i].detach().cpu().numpy()), False)
                 break
 
             objectmasks = pops.crop(highmasks, corners[0], recs[0])
@@ -340,6 +337,7 @@ class DroidNet(nn.Module):
             # upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
             upsampled_disps = upsample4(disps.unsqueeze(-1), True).squeeze(-1)
             disps = pops.crop(upsampled_disps, corners[0], recs[0])
+            depth_valid = pops.crop(high_depth_valid, corners[0], recs[0])[:, ii, ..., None]
 
             # upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
             upsampled_flow = upsample4(coords1 - coords0, False)
@@ -349,18 +347,19 @@ class DroidNet(nn.Module):
             intrinsics[...,:] *= 4
             intrinsics[..., 2] -= corners[0][1]
             intrinsics[..., 3] -= corners[0][0]
+            gtflow, _ = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
-            # gtflow = pops.crop(highgtflow, corners[0], recs[0]) + coords0
-            # gtmask = pops.crop(highmask, corners[0], recs[0])
-            gtcropdisps = pops.crop(highgtdisps, corners[0], recs[0])
-            maxdepth = (1.0/highgtdisps).max()
-            for i in range(upsampled_disps.shape[1]):
-                write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_upsampled_depth'), \
-                            ((1/upsampled_disps[0,i]).clamp(max = maxdepth).detach().cpu().numpy()), False)
-                write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_gt_depth'), \
-                            1/(gtcropdisps[0,i].detach().cpu().numpy()), False)
-                write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_gt_highdepth'), \
-                            1/(highgtdisps[0,i].detach().cpu().numpy()), False)
+            # # gtflow = pops.crop(highgtflow, corners[0], recs[0]) + coords0
+            # # gtmask = pops.crop(highmask, corners[0], recs[0])
+            # gtcropdisps = pops.crop(highgtdisps, corners[0], recs[0])
+            # maxdepth = (1.0/highgtdisps).max()
+            # for i in range(upsampled_disps.shape[1]):
+            #     write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_upsampled_depth'), \
+            #                 ((1/upsampled_disps[0,i]).clamp(max = maxdepth).detach().cpu().numpy()), False)
+            #     write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_gt_depth'), \
+            #                 1/(gtcropdisps[0,i].detach().cpu().numpy()), False)
+            #     write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'_gt_highdepth'), \
+            #                 1/(highgtdisps[0,i].detach().cpu().numpy()), False)
 
             # flow = (lowgtflow - coords0).squeeze(0)
             # upsampled_flow = 4*F.interpolate(flow.permute(0,3,1,2), scale_factor=4, mode='bilinear', align_corners=True).permute(0,2,3,1)
@@ -576,3 +575,45 @@ def write_depth(path, depth, grayscale, bits=1):
 
     return
 
+def evaluate_depth(gtdepth, mask, depth):
+    low_gt = (gtdepth)[mask]
+    low_pred = (depth)[mask]
+
+    low_diff = low_gt - low_pred
+    abs_low_diff = torch.abs(low_diff)
+    squared_diff = low_diff*low_diff
+    abs_low_error = torch.mean(abs_low_diff)
+
+    re_low_error = torch.mean((abs_low_diff/low_gt))
+    rmse_low = torch.sqrt(torch.mean(squared_diff))
+
+    print('abs_error {}'.format(abs_low_error))
+    print('rmse {}'.format(rmse_low))
+
+def save_debug_result(all_Gs_list, all_ObGs_list, all_disp_list, all_flow_list, valid_list,\
+                    objectmasks_list, all_weight_list, intrinsics_list, trackinfo, ii, jj, step):
+    
+    debug_file = {
+        'lgs':all_Gs_list[0][-1].detach().cpu(),
+        'hgs':all_Gs_list[1][-1].detach().cpu(),
+        'logs':all_ObGs_list[0][-1].detach().cpu(),
+        'hogs':all_ObGs_list[1][-1].detach().cpu(),
+        'ldisps':all_disp_list[0][-1].detach().cpu(),
+        'hdisps':all_disp_list[1][-1].detach().cpu(),
+        'lflow':all_flow_list[0][-1].detach().cpu(),
+        'hflow':all_flow_list[1][-1].detach().cpu(),
+        'lmask':objectmasks_list[0].detach().cpu(),
+        'hmask':objectmasks_list[1].detach().cpu(),
+        'lweight':all_weight_list[0][-1].detach().cpu(),
+        'hweight':all_weight_list[1][-1].detach().cpu(),
+        'lintrinsics':intrinsics_list[0].detach().cpu(),
+        'hintrinsics':intrinsics_list[1].detach().cpu(),
+        'ii':ii.detach().cpu(),
+        'jj':jj.detach().cpu(),
+        'frames':trackinfo['frames'][0].cpu(),
+        'lvalid':valid_list[0].detach().cpu(),
+        'hvalid':valid_list[1].detach().cpu()
+        }
+    
+    with open(os.path.join('result/debug/wockwoweight', 'debug_'+str(step)+'.pkl'), 'wb') as tt:
+                pk.dump(debug_file,tt)
