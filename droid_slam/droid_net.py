@@ -9,8 +9,8 @@ from modules.corr import CorrBlock
 from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
-from lietorch import SE3
-from geom.ba import BA
+from lietorch import SE3, SO3, Sim3
+from geom.ba import BA, MoBA
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
@@ -169,7 +169,7 @@ class DroidNet(nn.Module):
         return fmaps, net, inp
 
 
-    def forward(self, Gs, images, disps, intrinsics, graph=None, num_steps=12, fixedp=2):
+    def forward(self, Gs, Ps, images, disps, gtdisps, intrinsics, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
 
         u = keyframe_indicies(graph)
@@ -188,7 +188,20 @@ class DroidNet(nn.Module):
         coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
         target = coords1.clone()
 
+        gtflow, _ = pops.projective_transform(Ps, gtdisps[:,:,3::8,3::8], intrinsics, ii, jj)
+
         Gs_list, disp_list, residual_list = [], [], []
+
+        print('-----')
+        print('before optimization')
+        loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+
+        print('geo loss is {}'.format(loss.item()))
+        print('r_err is {}'.format(r_err.item()))
+        print('t_err is {}'.format(t_err.item()))
+
+        print('-----')
+
         for step in range(num_steps):
             Gs = Gs.detach()
             disps = disps.detach()
@@ -208,6 +221,10 @@ class DroidNet(nn.Module):
 
             target = coords1 + delta
 
+            print('predicted weight is {}'.format(weight.mean().item()))
+            print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
+            print('predicted flow delta is {}'.format(delta.mean().item()))
+
             for i in range(2):
                 Gs, disps = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
@@ -218,5 +235,43 @@ class DroidNet(nn.Module):
             disp_list.append(upsample_disp(disps, upmask))
             residual_list.append(valid_mask * residual)
 
+        print('-----')
+        print('after optimization')
+        loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+
+        print('geo loss is {}'.format(loss.item()))
+        print('r_err is {}'.format(r_err.item()))
+        print('t_err is {}'.format(t_err.item()))
+        
+        print('-----')
+
 
         return Gs_list, disp_list, residual_list
+
+
+def pose_metrics(dE):
+    """ Translation/Rotation/Scaling metrics from Sim3 """
+    t, q, s = dE.data.split([3, 4, 1], -1)
+    ang = SO3(q).log().norm(dim=-1)
+
+    # convert radians to degrees
+    r_err = (180 / np.pi) * ang
+    t_err = t.norm(dim=-1)
+    s_err = (s - 1.0).abs()
+    return r_err, t_err, s_err
+
+def geoloss(objectposes, object_est, ii, jj):
+    dP = objectposes[:,jj] * objectposes[:,ii].inv()
+    dG = object_est[:,jj] * object_est[:,ii].inv()
+
+    d = (dG * dP.inv()).log()
+
+    tau, phi = d.split([3,3], dim=-1)
+    geodesic_loss = tau.norm(dim=-1).mean() + phi.norm(dim=-1).mean()
+
+    dE = Sim3(dG * dP.inv()).detach()
+    r_err, t_err, s_err = pose_metrics(dE)
+    r_err = r_err.mean()
+    t_err = t_err.mean()
+
+    return geodesic_loss, r_err, t_err

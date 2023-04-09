@@ -40,11 +40,11 @@ def show_image(image):
     cv2.imshow('image', image / 255.0)
     cv2.waitKey()
 
-def train(gpu, args):
+def train(args):
     """ Test to make sure project transform correctly maps points """
 
     # coordinate multiple GPUs
-    setup_ddp(gpu, args)
+    # setup_ddp(gpu, args)
     rng = np.random.default_rng(12345)
 
     N = args.n_frames
@@ -52,18 +52,20 @@ def train(gpu, args):
     model.cuda()
     model.train()
 
-    model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
+    # model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
 
     if args.ckpt is not None:
         model.load_state_dict(torch.load(args.ckpt))
 
     # fetch dataloader
-    db = dataset_factory(['tartan'], datapath=args.datapath, n_frames=args.n_frames, fmin=args.fmin, fmax=args.fmax)
+    db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax)
+    test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax)
 
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
-        db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    # train_sampler = torch.utils.data.distributed.DistributedSampler(
+    #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
 
-    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
+    train_loader = DataLoader(db, batch_size=args.batch, shuffle=True)
+    test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -73,90 +75,137 @@ def train(gpu, args):
     logger = Logger(args.name, scheduler)
     should_keep_training = True
     total_steps = 0
+    VAL = True
 
     while should_keep_training:
-        for i_batch, item in enumerate(train_loader):
-            optimizer.zero_grad()
+        if VAL:
+            model.eval()
+            eval_steps = 0
 
-            images, poses, disps, intrinsics = [x.to('cuda') for x in item]
+            for _, item in enumerate(test_loader):
+                            
+                images, poses, disps, midasdisps, intrinsics = [x.to('cuda') for x in item]
+                Ps = SE3(poses)
+                Gs = SE3.IdentityLike(Ps)
 
-            # convert poses w2c -> c2w
-            Ps = SE3(poses).inv()
-            Gs = SE3.IdentityLike(Ps)
-
-            # randomize frame graph
-            if np.random.rand() < 0.5:
-                graph = build_frame_graph(poses, disps, intrinsics, num=args.edges)
+                if np.random.rand() < 0.5:
+                    graph = build_frame_graph(poses, disps, intrinsics, num=args.edges)
             
-            else:
-                graph = OrderedDict()
-                for i in range(N):
-                    graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
-            
-            # fix first to camera poses
-            Gs.data[:,0] = Ps.data[:,0].clone()
-            Gs.data[:,1:] = Ps.data[:,[1]].clone()
-            disp0 = torch.ones_like(disps[:,:,3::8,3::8])
+                else:
+                    graph = OrderedDict()
+                    for i in range(N):
+                        graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
 
-            # perform random restarts
-            r = 0
-            while r < args.restart_prob:
-                r = rng.random()
-                
-                intrinsics0 = intrinsics / 8.0
-                poses_est, disps_est, residuals = model(Gs, images, disp0, intrinsics0, 
-                    graph, num_steps=args.iters, fixedp=2)
+                Gs.data[:,0] = Ps.data[:,0].clone()
+                Gs.data[:,1:] = Ps.data[:,[1]].clone()
+                disp0 = torch.ones_like(disps[:,:,3::8,3::8])
 
-                geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False)
-                res_loss, res_metrics = losses.residual_loss(residuals)
-                flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph)
+                with torch.no_grad():
 
-                loss = args.w1 * geo_loss + args.w2 * res_loss + args.w3 * flo_loss
-                loss.backward()
+                    intrinsics0 = intrinsics / 8.0
+                    poses_est, disps_est, residuals = model(Gs, Ps, images, disp0, disps, intrinsics0, 
+                        graph, num_steps=args.iters, fixedp=2)
 
-                Gs = poses_est[-1].detach()
-                disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+                    geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False)
+                    res_loss, res_metrics = losses.residual_loss(residuals)
+                    flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph)
 
-            metrics = {}
-            metrics.update(geo_metrics)
-            metrics.update(res_metrics)
-            metrics.update(flo_metrics)
-
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            optimizer.step()
-            scheduler.step()
-            
-            total_steps += 1
-
-            if gpu == 0:
+                metrics = {}
+                metrics.update(geo_metrics)
+                metrics.update(res_metrics)
+                metrics.update(flo_metrics)
                 logger.push(metrics)
 
-            if total_steps % 10000 == 0 and gpu == 0:
-                PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
-                torch.save(model.state_dict(), PATH)
+                eval_steps += 1
 
-            if total_steps >= args.steps:
-                should_keep_training = False
-                break
+                if eval_steps == 100:
+                    break
 
-    dist.destroy_process_group()
+            should_keep_training = False
+            break
+
+        else:
+
+            for i_batch, item in enumerate(train_loader):
+                optimizer.zero_grad()
+
+                images, poses, disps, midasdisps, intrinsics = [x.to('cuda') for x in item]
+
+                Ps = SE3(poses)
+                Gs = SE3.IdentityLike(Ps)
+
+                # randomize frame graph
+                if np.random.rand() < 0.5:
+                    graph = build_frame_graph(poses, disps, intrinsics, num=args.edges)
+                
+                else:
+                    graph = OrderedDict()
+                    for i in range(N):
+                        graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
+                
+                # fix first to camera poses
+                Gs.data[:,0] = Ps.data[:,0].clone()
+                Gs.data[:,1:] = Ps.data[:,[1]].clone()
+                disp0 = disps[:,:,3::8,3::8]
+
+                # perform random restarts
+                r = 0
+                while r < args.restart_prob:
+                    r = rng.random()
+                    
+                    intrinsics0 = intrinsics / 8.0
+                    poses_est, disps_est, residuals = model(Gs, images, disp0, disps, intrinsics0, 
+                        graph, num_steps=args.iters, fixedp=2)
+
+                    geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False)
+                    res_loss, res_metrics = losses.residual_loss(residuals)
+                    flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph)
+
+                    loss = args.w1 * geo_loss + args.w2 * res_loss + args.w3 * flo_loss
+                    loss.backward()
+
+                    Gs = poses_est[-1].detach()
+                    disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+
+                metrics = {}
+                metrics.update(geo_metrics)
+                metrics.update(res_metrics)
+                metrics.update(flo_metrics)
+
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+                optimizer.step()
+                scheduler.step()
+                
+                total_steps += 1
+
+                logger.push(metrics)
+
+                if total_steps % 2000 == 0:
+                    PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
+                    torch.save(model.state_dict(), PATH)
+
+                if total_steps >= args.steps:
+                    should_keep_training = False
+                    break
+
+    # dist.destroy_process_group()
                 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='bla', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore')
+    parser.add_argument('--name', default='droid_vkitti_veri', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/droid_vkitti_006000.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='datasets/TartanAir', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=4)
+    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
+    parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=15)
-    parser.add_argument('--steps', type=int, default=250000)
+    parser.add_argument('--iters', type=int, default=10)
+    parser.add_argument('--steps', type=int, default=80000)
     parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
-    parser.add_argument('--n_frames', type=int, default=7)
+    parser.add_argument('--n_frames', type=int, default=6)
 
     parser.add_argument('--w1', type=float, default=10.0)
     parser.add_argument('--w2', type=float, default=0.01)
@@ -180,8 +229,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.world_size = args.gpus
+    train(args)
 
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12356'
-    mp.spawn(train, nprocs=args.gpus, args=(args,))
+    # os.environ['MASTER_ADDR'] = 'localhost'
+    # os.environ['MASTER_PORT'] = '12356'
+    # mp.spawn(train, nprocs=args.gpus, args=(args,))
 
