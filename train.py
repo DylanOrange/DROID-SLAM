@@ -51,15 +51,15 @@ def load_weights(model, weights):
     # for key in state_dict.keys():
     #     state_dict.update({key.split('.', 1)[1]:state_dict.pop(key)})
 
-    # state_dict["update.weight.2.weight"] = state_dict["update.weight.2.weight"][:2]
-    # state_dict["update.weight.2.bias"] = state_dict["update.weight.2.bias"][:2]
+    state_dict["update.weight.2.weight"] = state_dict["update.weight.2.weight"][:2]
+    state_dict["update.weight.2.bias"] = state_dict["update.weight.2.bias"][:2]
     state_dict["update.delta.2.weight"] = state_dict["update.delta.2.weight"][:2]
     state_dict["update.delta.2.bias"] = state_dict["update.delta.2.bias"][:2]
 
     model.load_state_dict(state_dict, strict = False)
     return model
 
-def step(model, item, mode, logger, skip, save, total_steps):
+def step(model, item, mode, logger, skip, save, total_steps, args):
 
     images, lowimages, poses, objectposes, objectmasks, disps, \
         highdisps, midasdisps, highmask, intrinsics, trackinfo, scale, a, b, depth_valid, high_depth_valid = item
@@ -93,17 +93,13 @@ def step(model, item, mode, logger, skip, save, total_steps):
 
     disp0 = torch.ones_like(disps)
 
-    # print('input camera pose is ')
-    # print(Gs.data)
-    # print('input object pose is ')
-    # print(ObjectGs.data)
-
     # a = torch.ones(disp0.shape[0], N, 1, 1, device = disp0.device)
     # b = torch.zeros(disp0.shape[0], N, 1, 1, device = disp0.device)
 
     r = 0
     while r < args.restart_prob:
-        r = rng.random()
+        r = np.random.rand()
+        print('random number is {}'.format(r))
 
         if mode == 'val':
             with torch.no_grad():
@@ -195,18 +191,17 @@ def step(model, item, mode, logger, skip, save, total_steps):
     return False
 
     
-def train(args):
+def train(gpu, args):
     """ Test to make sure project transform correctly maps points """
 
     # coordinate multiple GPUs
-    # setup_ddp(gpu, args)
-    # rng = np.random.default_rng(12345)
+    setup_ddp(gpu, args)
 
     model = DroidNet()
     model.cuda()
     model.train()
 
-    # model = DDP(model, device_ids=[gpu], find_unused_parameters=True)
+    model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
 
     if args.ckpt is not None:
         model = load_weights(model, args.ckpt)
@@ -215,8 +210,14 @@ def train(args):
     db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
     test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
 
-    train_loader = DataLoader(db, batch_size=args.batch, shuffle = True)
-    test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    
+    test_sampler = torch.utils.data.distributed.DistributedSampler(
+        test_db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    
+    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
+    test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -234,40 +235,40 @@ def train(args):
 
             optimizer.zero_grad()
 
-            # if total_steps % 200 == 0:
-            #     save = True
-            # if step(model, item, 'train', logger, skip, save, total_steps):
-            #     save = False
-            #     print('jump train!')
-            #     continue
+            if total_steps % 200 == 0:
+                save = True
+            if step(model, item, 'train', logger, skip, save, total_steps, args):
+                save = False
+                print('jump train!')
+                continue
             
-            # save = False
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            # optimizer.step()
-            # scheduler.step()
+            save = False
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+            optimizer.step()
+            scheduler.step()
             
             total_steps += 1
 
-            if total_steps % 1 == 0:
+            if total_steps % 100 == 0:
                 ##validation
                 model.eval()
                 eval_steps = 0
 
                 for _, item in enumerate(test_loader):
 
-                    if step(model, item, 'val', logger, skip, False, total_steps):
+                    if step(model, item, 'val', logger, skip, False, total_steps, args):
                         print('jump val!')
                         continue
                     eval_steps += 1
 
-                    if eval_steps == 100:
+                    if eval_steps == 20:
                         model.train()
                         break
 
             if total_steps>80000:
                 skip = True
 
-            if total_steps % 2000 == 0:
+            if total_steps % 2000 == 0 and gpu == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                 torch.save(model.state_dict(), PATH)
 
@@ -275,22 +276,22 @@ def train(args):
                 should_keep_training = False
                 break
 
-    # dist.destroy_process_group()
+    dist.destroy_process_group()
                 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
     parser.add_argument('--name', default='test', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/gtdepth_flow_woweightwock_036000.pth')
+    parser.add_argument('--ckpt', help='checkpoint to restore')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=1)
+    parser.add_argument('--gpus', type=int, default=2)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=10)
-    parser.add_argument('--steps', type=int, default=1)
-    parser.add_argument('--lr', type=float, default=0.00025)
+    parser.add_argument('--iters', type=int, default=1)
+    parser.add_argument('--steps', type=int, default=80000)
+    parser.add_argument('--lr', type=float, default=0.0005)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=6)
 
@@ -318,10 +319,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.world_size = args.gpus
-    rng = np.random.default_rng(12345)
-    train(args)
 
-    # os.environ['MASTER_ADDR'] = 'localhost'
-    # os.environ['MASTER_PORT'] = '12356'
-    # mp.spawn(train, nprocs=args.gpus, args=(args,))
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12356'
+    mp.spawn(train, nprocs=args.gpus, args=(args,))
 

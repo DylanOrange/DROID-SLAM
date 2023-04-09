@@ -341,9 +341,9 @@ class DroidNet(nn.Module):
             all_flow_list.append(flow_list)
 
             if index == 1:
-                if save:
-                    save_debug_result(all_Gs_list, all_ObGs_list, all_disp_list, all_flow_list, valid_list,\
-                                      objectmasks_list, all_weight_list, intrinsics_list, trackinfo, ii, jj, total_steps)
+                # if save:
+                #     save_debug_result(all_Gs_list, all_ObGs_list, all_disp_list, all_flow_list, valid_list,\
+                #                       objectmasks_list, all_weight_list, intrinsics_list, trackinfo, ii, jj, total_steps)
                 # for i in range(disp_list[-1].shape[1]):
                 #     write_depth(os.path.join('result/multiscale', str(trackinfo['frames'][0][i].item())+'pred_cropdepth'), \
                 #             1/(disp_list[-1][0,i].detach().cpu().numpy()), False)
