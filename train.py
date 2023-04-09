@@ -40,11 +40,11 @@ def show_image(image):
     cv2.imshow('image', image / 255.0)
     cv2.waitKey()
 
-def train(args):
+def train(gpu, args):
     """ Test to make sure project transform correctly maps points """
 
     # coordinate multiple GPUs
-    # setup_ddp(gpu, args)
+    setup_ddp(gpu, args)
     rng = np.random.default_rng(12345)
 
     N = args.n_frames
@@ -52,7 +52,7 @@ def train(args):
     model.cuda()
     model.train()
 
-    # model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
+    model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
 
     if args.ckpt is not None:
         model.load_state_dict(torch.load(args.ckpt))
@@ -61,11 +61,14 @@ def train(args):
     db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax)
     test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax)
 
-    # train_sampler = torch.utils.data.distributed.DistributedSampler(
-    #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        db, shuffle=True, num_replicas=args.world_size, rank=gpu)
 
-    train_loader = DataLoader(db, batch_size=args.batch, shuffle=True)
-    test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
+    test_sampler = torch.utils.data.distributed.DistributedSampler(
+        test_db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    
+    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
+    test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -75,7 +78,7 @@ def train(args):
     logger = Logger(args.name, scheduler)
     should_keep_training = True
     total_steps = 0
-    VAL = True
+    VAL = False
 
     while should_keep_training:
         if VAL:
@@ -146,7 +149,7 @@ def train(args):
                 # fix first to camera poses
                 Gs.data[:,0] = Ps.data[:,0].clone()
                 Gs.data[:,1:] = Ps.data[:,[1]].clone()
-                disp0 = disps[:,:,3::8,3::8]
+                disp0 = torch.ones_like(disps[:,:,3::8,3::8])
 
                 # perform random restarts
                 r = 0
@@ -154,7 +157,7 @@ def train(args):
                     r = rng.random()
                     
                     intrinsics0 = intrinsics / 8.0
-                    poses_est, disps_est, residuals = model(Gs, images, disp0, disps, intrinsics0, 
+                    poses_est, disps_est, residuals = model(Gs, Ps, images, disp0, disps, intrinsics0, 
                         graph, num_steps=args.iters, fixedp=2)
 
                     geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False)
@@ -178,9 +181,10 @@ def train(args):
                 
                 total_steps += 1
 
-                logger.push(metrics)
+                if gpu == 0:
+                    logger.push(metrics)
 
-                if total_steps % 2000 == 0:
+                if total_steps % 2000 == 0 and gpu == 0:  
                     PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                     torch.save(model.state_dict(), PATH)
 
@@ -188,22 +192,22 @@ def train(args):
                     should_keep_training = False
                     break
 
-    # dist.destroy_process_group()
+    dist.destroy_process_group()
                 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='droid_vkitti_veri', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/droid_vkitti_006000.pth')
+    parser.add_argument('--name', default='test', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=1)
+    parser.add_argument('--gpus', type=int, default=2)
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=10)
     parser.add_argument('--steps', type=int, default=80000)
-    parser.add_argument('--lr', type=float, default=0.00025)
+    parser.add_argument('--lr', type=float, default=0.0005)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=6)
 
@@ -229,9 +233,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.world_size = args.gpus
-    train(args)
+    # train(args)
 
-    # os.environ['MASTER_ADDR'] = 'localhost'
-    # os.environ['MASTER_PORT'] = '12356'
-    # mp.spawn(train, nprocs=args.gpus, args=(args,))
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12356'
+    mp.spawn(train, nprocs=args.gpus, args=(args,))
 
