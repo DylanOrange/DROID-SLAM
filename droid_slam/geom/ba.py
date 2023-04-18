@@ -426,7 +426,7 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     N_car = objectmask.shape[0]
 
     ### 1: co mpute jacobians and residuals ###
-    coords, valid, (Jci, Jcj, Joi, Joj) = pops.dyprojective_transform(
+    coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, \
         objectmask = objectmask, Jacobian = True, batch = False)
 
@@ -471,42 +471,42 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     H = torch.matmul(wh.transpose(1,2), h)###weight乘了两次！！！
     # H = H.view(B, U, D, U, D).transpose(2,3)
 
-    # Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
-    # # Jz = torch.zeros_like(Jz)
+    Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
+    # Jz = torch.zeros_like(Jz)
 
-    # Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,6,3030
-    # Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,6,3030
+    Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,6,3030
+    Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,6,3030
 
-    # Eoi = ((w*Joi).transpose(2,3).view(B,N,DO,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,3,3030
-    # Eoj = ((w*Joj).transpose(2,3).view(B,N,DO,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,3,3030
+    Eoi = ((w*Joi).transpose(2,3).view(B,N,DO,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,3,3030
+    Eoj = ((w*Joj).transpose(2,3).view(B,N,DO,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,3,3030
 
-    # w = w.view(B, N, ht*wd, -1)#1,18,3030,2
-    # r = r.view(B, N, ht*wd, -1)#1,18,3030,2
-    # wk = torch.sum(w*r*Jz, dim=-1)#1,18,3030
-    # Ck = torch.sum(w*Jz*Jz, dim=-1)#1,18,3030
-    # kx, kk = torch.unique(ii, return_inverse=True)#
-    # M = kx.shape[0]#5
+    w = w.view(B, N, ht*wd, -1)#1,18,3030,2
+    r = r.view(B, N, ht*wd, -1)#1,18,3030,2
+    wk = torch.sum(w*r*Jz, dim=-1)#1,18,3030
+    Ck = torch.sum(w*Jz*Jz, dim=-1)#1,18,3030
+    kx, kk = torch.unique(ii, return_inverse=True)#
+    M = kx.shape[0]#5
 
-    # Ec = safe_scatter_add_mat(Eci, ii, kk, P, M) + \
-    #     safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,36,6,3030
+    Ec = safe_scatter_add_mat(Eci, ii, kk, P, M) + \
+        safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,36,6,3030
 
-    # Eo = safe_scatter_add_mat(Eoi, ii, kk, P, M) + \
-    #     safe_scatter_add_mat(Eoj, jj, kk, P , M)#1,36,3,3030
+    Eo = safe_scatter_add_mat(Eoi, ii, kk, P, M) + \
+        safe_scatter_add_mat(Eoj, jj, kk, P, M)#1,36,3,3030
 
-    # C = safe_scatter_add_vec(Ck, kk, M).view(B,-1,1)#1,6,3030
-    # w = safe_scatter_add_vec(wk, kk, M).view(B,-1,1)#1,6,3030 
+    C = safe_scatter_add_vec(Ck, kk, M).view(B,-1,1)#1,6,3030
+    w = safe_scatter_add_vec(wk, kk, M).view(B,-1,1)#1,6,3030 
 
-    # # C = C + 1e-7 #eta, 5,30,101
-    # C = C + eta.view(*C.shape) + 1e-7
+    # C = C + 1e-7 #eta, 5,30,101
+    C = C + eta.view(*C.shape) + 1e-7
 
-    # Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:].permute(0,1,3,2,4)#1,5,7,6,30*101->1,5,6,7,30*101
-    # Eo = Eo.view(B, P, M, DO, ht*wd)[:, fixedp:].permute(0,1,3,2,4)#1,5,7,3,30*101->1,5,3,7,30*101
+    Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:].permute(0,1,3,2,4)#1,5,7,6,30*101->1,5,6,7,30*101
+    Eo = Eo.view(B, P, M, DO, ht*wd)[:, fixedp:].permute(0,1,3,2,4)#1,5,7,3,30*101->1,5,3,7,30*101
 
-    # E = torch.cat((Ec.reshape(B, (P-fixedp)*D, M, ht*wd), Eo.reshape(B, (P-fixedp)*DO, M, ht*wd)), dim=1)
+    E = torch.cat((Ec.reshape(B, (P-fixedp)*D, M, ht*wd), Eo.reshape(B, (P-fixedp)*DO, M, ht*wd)), dim=1)
 
     # ## 3: solve the system ###
-    dx = block_solve(H, v)
-    # dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
+    # dx = block_solve(H, v)
+    dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
     
     camera_dx = dx[:,:(P-fixedp)*D].reshape(-1, P-fixedp, D)
     object_dx = dx[:,(P-fixedp)*D:].reshape(-1, P-fixedp, DO)
@@ -520,11 +520,11 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     poses = pose_retr(poses, camera_dx, torch.arange(P).to(device=dx.device) + fixedp)
     objectposes = pose_retr(objectposes, object_dx, torch.arange(P).to(device=dx.device) + fixedp)
 
-    # disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
-    # disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
-    # disps = disps.clamp(min=0.0)
+    disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
+    disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
+    disps = disps.clamp(min=0.0)
     
-    return poses, objectposes
+    return poses, objectposes, disps
 
 def dynamictestBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 

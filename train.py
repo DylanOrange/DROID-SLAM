@@ -97,7 +97,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
     #     ObjectGs[:, i] = SE3.exp(dOw)*ObjectGs[:, 0]
 
     # disp0 = lowmidasdepths
-    # disp0 = torch.ones_like(disps)
+    disp0 = torch.ones_like(disps)
 
     r = 0
     while r < args.restart_prob:
@@ -106,7 +106,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
         if mode == 'val':
             with torch.no_grad():
                 poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
-                                                                                               objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
+                                                                                               objectmasks, highmask, disp0, disps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                                depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
@@ -120,7 +120,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
                
         else:
             poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
-                                                                                            objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
+                                                                                            objectmasks, highmask, disp0, disps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                             depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
             
             geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
@@ -143,7 +143,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
 
         Gs = poses_est[1][-1].detach()
         ObjectGs = objectposes_est[1][-1].detach()
-        disps = disps_est[0][-1].detach()
+        disp0 = disps_est[0][-1].detach()
 
         if skip:
             if flow_metrics['abs_high_dyna_error'] > 1.2*flow_metrics['abs_high_error'] and Obgeo_metrics[1]['high_ob_rot_error'] > 0.5:
@@ -285,7 +285,7 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='car4-3dof-full', help='name your experiment')
+    parser.add_argument('--name', default='car4-3dof-depth', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/cofusion', help="path to dataset directory")

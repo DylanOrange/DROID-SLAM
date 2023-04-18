@@ -182,12 +182,12 @@ class UpdateModule(nn.Module):
 
         net = net.view(*output_dim)
 
-        # if ii is not None:
-        #     eta = self.agg(net, ii.to(net.device))
-        #     return net, delta, weight, eta
+        if ii is not None:
+            eta = self.agg(net, ii.to(net.device))
+            return net, delta, weight, eta
 
-        # else:
-        return net, delta, weight
+        else:
+            return net, delta, weight
 
 
 class DroidNet(nn.Module):
@@ -285,7 +285,7 @@ class DroidNet(nn.Module):
                 motion = torch.cat([flow, resd], dim=-1)
                 motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
-                net, delta, weight = \
+                net, delta, weight, eta = \
                     self.update(net, inp, corr, motion, ii, jj)
 
                 print('predicted weight is {}'.format(weight.mean().item()))
@@ -297,8 +297,8 @@ class DroidNet(nn.Module):
                 #     Gs, ObjectGs, a, b, midasdisps = midasBA(gtflow, gtmask, ObjectGs, objectmasks, trackinfo, validmask, \
                 #                                     eta, Gs, gtdisps, midasdisps, intrinsics, ii, jj, a, b, fixedp=2)
                 for i in range(2):
-                    Gs, ObjectGs = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
-                                                    None, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                    Gs, ObjectGs, disps = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
+                                                    eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
                 # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
                 coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
                                                                     validmask, ObjectGs, objectmasks)
@@ -347,11 +347,10 @@ class DroidNet(nn.Module):
             objectmasks = pops.crop(highmasks, corners[0], recs[0])
 
             # upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
-            # upsampled_disps = upsample4(disps.unsqueeze(-1), True).squeeze(-1)
-            disps = pops.crop(highgtdisps, corners[0], recs[0])
-            # gtdisps = pops.crop(highgtdisps, corners[0], recs[0])
+            upsampled_disps = upsample4(disps.unsqueeze(-1), True).squeeze(-1)
+            disps = pops.crop(upsampled_disps, corners[0], recs[0])
+            gtdisps = pops.crop(highgtdisps, corners[0], recs[0])
             # disps = pops.crop(midasdisps, corners[0], recs[0])
-            # disps = gtdisps
             # depth_valid = pops.crop(high_depth_valid, corners[0], recs[0])[:, ii, ..., None]
 
             # upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
@@ -362,7 +361,7 @@ class DroidNet(nn.Module):
             intrinsics[...,:] *= 4
             intrinsics[..., 2] -= corners[0][1]
             intrinsics[..., 3] -= corners[0][0]
-            gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+            gtflow, gtmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
             # print('----------')
             # # gtflow = pops.crop(highgtflow, corners[0], recs[0]) + coords0
