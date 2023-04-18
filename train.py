@@ -61,8 +61,11 @@ def load_weights(model, weights):
 
 def step(model, item, mode, logger, skip, save, total_steps, args):
 
-    images, lowimages, poses, objectposes, objectmasks, disps, \
-        highdisps, midasdisps, highmask, intrinsics, trackinfo, scale, a, b, depth_valid, high_depth_valid = item
+    images, poses, objectposes, objectmasks, disps, \
+        highdisps, highmask, intrinsics, scale, depth_valid, high_depth_valid = [x.to('cuda') for x in item[0]]
+    trackinfo = item[1]
+    for key in trackinfo.keys():
+        trackinfo[key] = trackinfo[key].to('cuda')
 
     N = disps.shape[1]
 
@@ -76,36 +79,35 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
     for i in range(N):
         graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
 
-    Gs.data[:,:2] = Ps.data[:,:2].clone()
-    ObjectGs.data[:, :2] = ObjectPs.data[:, :2].clone()
+    Gs.data[:,0] = Ps.data[:,0].clone()
+    ObjectGs.data[:, 0] = ObjectPs.data[:, 0].clone()
+    Gs.data[:,1:] = Ps.data[:,1].clone()
+    ObjectGs.data[:, 1:] = ObjectPs.data[:, 1].clone()
     
-    dGs = Gs[:,1]*Gs[:,0].inv()
-    ds = dGs.log()/(trackinfo['frames'][:,1] - trackinfo['frames'][:,0])
-    dOGs = ObjectGs[:,1]*ObjectGs[:,0].inv()
-    dOs = dOGs.log()/(trackinfo['frames'][:,1] - trackinfo['frames'][:,0])
+    # dGs = Gs[:,1]*Gs[:,0].inv()
+    # ds = dGs.log()/(trackinfo['frames'][:,1] - trackinfo['frames'][:,0])
+    # dOGs = ObjectGs[:,1]*ObjectGs[:,0].inv()
+    # dOs = dOGs.log()/(trackinfo['frames'][:,1] - trackinfo['frames'][:,0])
 
-    for i in range(2, N):
-        step = trackinfo['frames'][:,i] - trackinfo['frames'][:,0]
-        dw = ds*step
-        dOw = dOs*step
-        Gs[:, i] = SE3.exp(dw)*Gs[:, 0]
-        ObjectGs[:, i] = SE3.exp(dOw)*ObjectGs[:, 0]
+    # for i in range(2, N):
+    #     step = trackinfo['frames'][:,i] - trackinfo['frames'][:,0]
+    #     dw = ds*step
+    #     dOw = dOs*step
+    #     Gs[:, i] = SE3.exp(dw)*Gs[:, 0]
+    #     ObjectGs[:, i] = SE3.exp(dOw)*ObjectGs[:, 0]
 
-    disp0 = torch.ones_like(disps)
-
-    # a = torch.ones(disp0.shape[0], N, 1, 1, device = disp0.device)
-    # b = torch.zeros(disp0.shape[0], N, 1, 1, device = disp0.device)
+    # disp0 = lowmidasdepths
+    # disp0 = torch.ones_like(disps)
 
     r = 0
     while r < args.restart_prob:
         r = np.random.rand()
-        print('random number is {}'.format(r))
 
         if mode == 'val':
             with torch.no_grad():
-                poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, lowimages, \
-                                                                                               objectmasks, highmask, disps, disps, midasdisps, highdisps, intrinsics.clone(), trackinfo,\
-                                                                                                a, b, depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
+                poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
+                                                                                               objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
+                                                                                               depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
@@ -117,9 +119,10 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
                                  objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
                
         else:
-            poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, lowimages, \
-                                                                                            objectmasks, highmask, disps, disps, midasdisps, highdisps, intrinsics.clone(), trackinfo,\
-                                                                                         a, b, depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
+            poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
+                                                                                            objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
+                                                                                            depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
+            
             geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
             Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
             static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
@@ -128,22 +131,19 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
             error_highflow, error_dyhigh, error_induced_high, error_highdepth, error_highdynadepth, flow_metrics, \
             = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
                                 objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
-            #10,0.01,0.05   0.05, 0.05, 0.5, 2, 2, 0.05, 0.8
-            #0.5, 0.5, 0.005, 0.1, 0.1, 0.025, 0.4
-            loss = 0.1*(args.w1 * geo_loss[0] + args.w1 * Obgeo_loss[0] + \
+
+            loss = 0.5*(args.w1 * geo_loss[0] + args.w1 * 5* Obgeo_loss[0] + \
                 args.w2 * static_resi_loss[0] +\
-                args.w3 * error_lowflow +\
-                10*args.w3 * error_lowdepth) +\
-                args.w1 * geo_loss[1] + args.w1 * Obgeo_loss[1] + \
+                args.w3 * error_induced_low) +\
+                args.w1 * geo_loss[1] + args.w1 * 5* Obgeo_loss[1] + \
                 args.w2 * static_resi_loss[1] +\
-                args.w3 * error_highflow +\
-                10*args.w3*error_highdepth
+                args.w3 * error_induced_high
             
             loss.backward()
 
         Gs = poses_est[1][-1].detach()
         ObjectGs = objectposes_est[1][-1].detach()
-        disp0 = disps_est[0][-1].detach()
+        disps = disps_est[0][-1].detach()
 
         if skip:
             if flow_metrics['abs_high_dyna_error'] > 1.2*flow_metrics['abs_high_error'] and Obgeo_metrics[1]['high_ob_rot_error'] > 0.5:
@@ -177,6 +177,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
     }
     metrics.update(loss)
 
+    # if gpu ==0:
     if mode == 'val':
         val_metrics = {}
         for key in metrics:
@@ -191,33 +192,39 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
     return False
 
     
-def train(gpu, args):
+def train(args):
     """ Test to make sure project transform correctly maps points """
 
     # coordinate multiple GPUs
-    setup_ddp(gpu, args)
+    # setup_ddp(gpu, args)
 
     model = DroidNet()
     model.cuda()
     model.train()
 
-    model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
+    # model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
 
     if args.ckpt is not None:
         model = load_weights(model, args.ckpt)
+    
+    # for param in model.parameters():
+    #     print(param)
 
     # fetch dataloader
-    db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
-    test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    db = dataset_factory(['car4'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    test_db = dataset_factory(['car4'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
 
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
-        db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    # train_sampler = torch.utils.data.distributed.DistributedSampler(
+    #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
     
-    test_sampler = torch.utils.data.distributed.DistributedSampler(
-        test_db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    # test_sampler = torch.utils.data.distributed.DistributedSampler(
+    #     test_db, shuffle=True, num_replicas=args.world_size, rank=gpu)
     
-    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
-    test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
+    train_loader = DataLoader(db, batch_size=args.batch, shuffle = True)
+    test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
+    
+    # train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
+    # test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -235,21 +242,17 @@ def train(gpu, args):
 
             optimizer.zero_grad()
 
-            if total_steps % 200 == 0:
-                save = True
             if step(model, item, 'train', logger, skip, save, total_steps, args):
-                save = False
                 print('jump train!')
                 continue
             
-            save = False
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()
             scheduler.step()
             
             total_steps += 1
 
-            if total_steps % 100 == 0:
+            if total_steps % 500 == 0:
                 ##validation
                 model.eval()
                 eval_steps = 0
@@ -261,14 +264,14 @@ def train(gpu, args):
                         continue
                     eval_steps += 1
 
-                    if eval_steps == 20:
+                    if eval_steps == 60:
                         model.train()
                         break
 
             if total_steps>80000:
                 skip = True
 
-            if total_steps % 2000 == 0 and gpu == 0:
+            if total_steps % 2000 == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                 torch.save(model.state_dict(), PATH)
 
@@ -276,37 +279,37 @@ def train(gpu, args):
                 should_keep_training = False
                 break
 
-    dist.destroy_process_group()
+    # dist.destroy_process_group()
                 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='test', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore')
+    parser.add_argument('--name', default='car4-3dof-full', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=2)
+    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/cofusion', help="path to dataset directory")
+    parser.add_argument('--gpus', type=int, default=0)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=1)
-    parser.add_argument('--steps', type=int, default=80000)
-    parser.add_argument('--lr', type=float, default=0.0005)
+    parser.add_argument('--iters', type=int, default=10)
+    parser.add_argument('--steps', type=int, default=160000)
+    parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
-    parser.add_argument('--n_frames', type=int, default=6)
+    parser.add_argument('--n_frames', type=int, default=7)
 
     parser.add_argument('--w1', type=float, default=10.0)
     parser.add_argument('--w2', type=float, default=0.01)
     parser.add_argument('--w3', type=float, default=0.05)
 
-    parser.add_argument('--fmin', type=float, default=8.0)
-    parser.add_argument('--fmax', type=float, default=96.0)
-    parser.add_argument('--obfmin', type=float, default=5.0)
+    parser.add_argument('--fmin', type=float, default=2.0)
+    parser.add_argument('--fmax', type=float, default=30.0)
+    parser.add_argument('--obfmin', type=float, default=2.0)
     parser.add_argument('--obfmax', type=float, default=30.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')
     parser.add_argument('--edges', type=int, default=24)
-    parser.add_argument('--restart_prob', type=float, default=0.2)
+    parser.add_argument('--restart_prob', type=float, default=0.01)
 
     args = parser.parse_args()
 
@@ -319,8 +322,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.world_size = args.gpus
+    train(args)
 
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12356'
-    mp.spawn(train, nprocs=args.gpus, args=(args,))
+    # os.environ['MASTER_ADDR'] = 'localhost'
+    # os.environ['MASTER_PORT'] = '12348'
+    # mp.spawn(train, nprocs=args.gpus, args=(args,))
 

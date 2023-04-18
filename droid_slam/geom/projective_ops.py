@@ -143,7 +143,7 @@ def projective_transform(poses, depths, intrinsics, ii, jj, jacobian=False, retu
     # transform
     Gij = poses[:,jj] * poses[:,ii].inv()
 
-    Gij.data[:,ii==jj] = torch.as_tensor([-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype, device="cuda")
+    Gij.data[:,ii==jj] = torch.as_tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype, device="cuda")
     X1, Ja = actp(Gij, X0, jacobian=jacobian)
     
     # project (pinhole)
@@ -265,6 +265,7 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
 
     if Jacobian:
         # Ji transforms according to dual adjoint
+
         Jcj = torch.matmul(Jp1, J1)#2,12,30,101,2,6
         Jci = -Gij[:, :, None, None, None].adjT(Jcj)
 
@@ -273,8 +274,14 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
         Joi = Gjj[:, :, None, None, None].adjT(Jcj)
         Joj = -Joi
 
-        Joi = Joi*validobjectmask[..., None, None]
-        Joj = Joj*validobjectmask[..., None, None]
+        Jdof = torch.zeros(6,3, device = Joi.device)
+        Jdof[0,0] = Jdof[1,1] = Jdof[5,2] = 1
+
+        # Joi = Joi*validobjectmask[..., None, None]
+        # Joj = Joj*validobjectmask[..., None, None]
+
+        Joi = torch.matmul(Joi, Jdof)*validobjectmask[..., None, None]
+        Joj = torch.matmul(Joj, Jdof)*validobjectmask[..., None, None]
 
         if batch:
             Jci = Jcoi*validobjectmask[..., None, None]+ Jci*(1-validobjectmask[..., None, None])
@@ -285,12 +292,12 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
             Jz = torch.sum((Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None], dim = 0, keepdim=True) + (Gij[:, :, None, None] * Jz) * (1 - fullmask[..., None])
             # Jz = torch.cat(((Gij[:, :, None, None] * Jz) * (1 - fullmask[..., None]), (Gijobject[:, :, None, None] * Jz) *validobjectmask[..., None]), dim=0)
 
-        Jz = torch.matmul(Jp1, Jz.unsqueeze(-1))
+        # Jz = torch.matmul(Jp1, Jz.unsqueeze(-1))
         # Jb = Jz.clone()
         # Ja = Jz*midasdisps[:,ii,..., None, None]
         # Jb = -Jz*depths[:,ii,..., None, None]*depths[:,ii,..., None, None]
         # Ja = Jb/midasdisps[:,ii,..., None, None]
 
-        return x1, valid, (Jci, Jcj, Joi, Joj, Jz)
+        return x1, valid, (Jci, Jcj, Joi, Joj)
 
     return x1, valid

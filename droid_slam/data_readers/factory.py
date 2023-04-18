@@ -6,6 +6,7 @@ import os.path as osp
 # RGBD-Dataset
 from .tartan import TartanAir
 from .vkitti2 import VKitti2
+from .car import Car4
 
 from .stream import ImageStream
 from .stream import StereoStream
@@ -21,7 +22,9 @@ def dataset_factory(dataset_list, **kwargs):
     from torch.utils.data import ConcatDataset
 
     dataset_map = { 'tartan': (TartanAir, ),
-                                        'vkitti2': (VKitti2,),}
+                    'vkitti2': (VKitti2,),
+                    'car4': (Car4,),
+                    }
     db_list = []
     for key in dataset_list:
         # cache datasets for faster future loading

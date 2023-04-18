@@ -417,212 +417,108 @@ def cameraBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta,
     
     return poses, objectposes, disps
 
-def fulldynamicBA(target, weight, objectposes, objectmask, trackinfo, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
-
-    B, P, ht, wd = disps.shape#1,12,30,101
-    N = ii.shape[0]#42
-    D = poses.manifold_dim#6
-    N_car = objectmask.shape[0]
-
-    ### 1: compute jacobians and residuals ###
-
-    coords, valid, (Jci, Jcj, Joi, Joj) = pops.dyprojective_transform(
-        poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, objectmask = objectmask, Jacobian = TRUE)
-
-    r = (target - coords)*valid*weight
-    residual = r[r!=0.0]
-    print('residual is {}'.format(torch.mean((torch.abs(residual)))))
-
-    r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
-    # w = (valid*weight).view(B,N,-1,1)
-    w = (valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
-
-    Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    Joi = Joi.reshape(N_car, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
-    Joj = Joj.reshape(N_car, N, -1, D) *validmask[..., None, None]#1,18,30,101,2,6->1,18,6060,6
-
-    i = torch.arange(N).to('cuda')
-    ii_test = i*P + ii
-    jj_test = i*P + jj
-
-    hc = scatter_sum(Jci, ii_test, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_test, dim = 1,dim_size= N*P)
-    hc = hc.view(B, N, P, -1, D)#1,14,5,6060,6
-    hc = hc[:, :, fixedp:]#1,14,3,6060,6
-    hoi_list = []
-    for i in range(N_car):
-        hoi = scatter_sum(Joi[i], ii_test, dim = 0,dim_size= N*P) + scatter_sum(Joj[i], jj_test, dim = 0,dim_size= N*P)
-        hoi = hoi.view(B, N, P, -1, D)
-        hoi = hoi[:, :, trackinfo['apperance'][i][0]]
-        hoi = hoi[:, :, fixedp:]
-        hoi_list.append(hoi)
-    ho = torch.cat(hoi_list, dim = 2)
-    # ho = torch.zeros_like(ho)
-    h = torch.cat([hc, ho], dim = 2) #1,14,6,6060,6
-    h_test = h.transpose(2,3).contiguous()#1,14,6060,6,6
-    wh_test = h_test*w[..., None]
-
-    N_app = trackinfo['n_app'][0] + P-(N_car+1)*fixedp
-
-    h_v = wh_test.view(B, N, -1, N_app*D)#1,24,6060,24*6
-    h_vtrans = h_v.transpose(2,3)
-    v_test = torch.matmul(h_vtrans, r)
-    v_test = torch.sum(v_test, dim = 1)
-    v_test = v_test.view(B, N_app, D)
-    h_test = h_test.view(B, -1, N_app*D)#1,84840,36
-    wh_transpose = wh_test. view(B, -1, N_app*D)
-    wh_transpose = wh_transpose.transpose(1,2)
-    H_test = torch.matmul(wh_transpose, h_test)###weight乘了两次！！！
-    H_test = H_test.view(B, N_app, D, N_app, D).transpose(2,3)
-
-    # Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
-    # # Jz = torch.zeros_like(Jz)
-
-    # Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
-    # Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
-
-    # Eoi = ((w*Joi).transpose(2,3).view(N_car,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
-    # Eoj = ((w*Joj).transpose(2,3).view(N_car,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
-
-    # w = w.view(B, N, ht*wd, -1)#1,14,3030,2
-    # r = r.view(B, N, ht*wd, -1)#1,14,3030,2
-    # wk = torch.sum(w*r*Jz, dim=-1)#1,18,3030
-    # Ck = torch.sum(w*Jz*Jz, dim=-1)#1,18,3030
-    # kx, kk = torch.unique(ii, return_inverse=True)#
-    # M = kx.shape[0]#5
-
-    # Ec = safe_scatter_add_mat(Eci, ii, kk, P, M) + \
-    #     safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,15,6,3030
-
-    # Eo = safe_scatter_add_mat(Eoi, ii, kk, P, M) + \
-    #     safe_scatter_add_mat(Eoj, jj, kk, P , M)#6,15,6,3030
-
-    # C = safe_scatter_add_vec(Ck, kk, M)#1,5,3030
-    # w = safe_scatter_add_vec(wk, kk, M)#1,5,3030
-
-    # C = C + eta.view(*C.shape) + 1e-7
-
-    # Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
-    # Eo = Eo.view(N_car, P, M, D, ht*wd)#6,3,5,6,30*101
-    # Eo_list = []
-    # for i in range(N_car):
-    #     Eo_list.append(Eo[i, trackinfo['apperance'][i][0]][fixedp:])
-    # Eo = torch.cat(Eo_list, dim =0).unsqueeze(0)
-    # E = torch.cat([Ec,Eo], dim=1)
-
-    ### 3: solve the system ###
-    dx = block_solve(H_test, v_test)#1,4,6,1,5,3030
-    # dx, dz = schur_solve(H_test, E, C, v_test, w)#1,4,6,1,5,3030
-
-    P = P-fixedp
-    poses = pose_retr(poses, dx[:, :P, :], torch.arange(P).to(device=dx.device) + fixedp)
-
-    idx = P
-    for i in range(N_car):
-        nextidx = idx+len(trackinfo['apperance'][i][0])-fixedp
-        objectposes[i] = pose_retr(objectposes[i, None], dx[:, idx:nextidx], trackinfo['apperance'][i][0][fixedp:])
-        idx = nextidx
-
-    # disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
-    # disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
-    # disps = disps.clamp(min=0.0)
-    
-    return poses, objectposes, disps
-
 def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 
-    app = app['apperance'][0][0]
     B, P, ht, wd = disps.shape#1,2,30,101
     N = ii.shape[0]#2
     D = poses.manifold_dim#6
+    DO = 3
     N_car = objectmask.shape[0]
 
     ### 1: co mpute jacobians and residuals ###
-    coords, valid, (Jci, Jcj, Joi, Joj, Jz) = pops.dyprojective_transform(
+    coords, valid, (Jci, Jcj, Joi, Joj) = pops.dyprojective_transform(
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, \
         objectmask = objectmask, Jacobian = True, batch = False)
 
     r = (target - coords)
-    residual = r[(valid)[..., 0]!=0.0]
-    print('residual is {}'.format(torch.mean((torch.abs(residual)))))
+    residual = r[r!=0.0]
+    print('residual is {}'.format(torch.mean(residual)))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
-    # w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
-    w = .001*(valid).repeat(1,1,1,1,2).view(B,N,-1,1)
+    w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
+    # w = .001*(valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    Joi = Joi.reshape(N_car, N, -1, D)#1,18,30,101,2,6->1,18,6060,6
-    Joj = Joj.reshape(N_car, N, -1, D)#1,18,30,101,2,6->1,18,6060,6
+    Joi = Joi.reshape(N_car, N, -1, DO)#1,18,30,101,2,6->1,18,6060,6
+    Joj = Joj.reshape(N_car, N, -1, DO)#1,18,30,101,2,6->1,18,6060,6
 
     i = torch.arange(N).to('cuda')
     ii_scatter = i*P + ii
     jj_scatter = i*P + jj
 
     hc = scatter_sum(Jci, ii_scatter, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_scatter, dim = 1,dim_size= N*P)
-    hc = hc.view(B, N, P, -1, D)#1,14,5,6060,6
+    hc = hc.view(B, N, P, -1, D).permute(0,1,3,2,4)#1,18,6060,6,6
+    hc = hc[:, :, :, fixedp:].reshape(B, N, -1, (P-fixedp)*D)
 
-    hoi = scatter_sum(Joi, ii_scatter, dim = 1, dim_size= N*P) + scatter_sum(Joj, jj_scatter, dim = 1, dim_size= N*P)
-    hoi = hoi.view(B, N, P, -1, D)
+    ho = scatter_sum(Joi, ii_scatter, dim = 1, dim_size= N*P) + scatter_sum(Joj, jj_scatter, dim = 1, dim_size= N*P)
+    ho = ho.view(B, N, P, -1, DO).permute(0,1,3,2,4)#1,18,6,6060,3
+    ho = ho[:, :, :, fixedp:].reshape(B, N, -1, (P-fixedp)*DO)
 
-    h = torch.cat((hc[:, :, fixedp:], hoi[:, :, app[fixedp:]]), dim = 2)
+    h = torch.cat((hc, ho), dim = -1)
 
-    U = h.shape[2]
-    k = hc.shape[3]
+    # U = h.shape[2]
+    k = hc.shape[2]
 
-    h = h.transpose(2,3).contiguous().view(B, N, k, U*D)#2,14,8330,36
+    # h = h.transpose(2,3).contiguous().view(B, N, k, U*D)#2,14,8330,36
     wh= h*w#2,14,8330,36
 
     v = torch.matmul(wh.transpose(2,3), r)#2,14,36,8330    2,14,8330,1
-    v = torch.sum(v, dim = 1).view(B,U,D)
+    v = torch.sum(v, dim = 1).view(B,-1,1)
 
-    h = h.view(B, N*k, U*D)
-    wh = wh.view(B, N*k, U*D)
+    h = h.view(B, N*k, -1)
+    wh = wh.view(B, N*k, -1)
     H = torch.matmul(wh.transpose(1,2), h)###weight乘了两次！！！
-    H = H.view(B, U, D, U, D).transpose(2,3)
+    # H = H.view(B, U, D, U, D).transpose(2,3)
 
     # Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
-    # Jz = torch.zeros_like(Jz)
+    # # Jz = torch.zeros_like(Jz)
 
-    # Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
-    # Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
+    # Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,6,3030
+    # Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,6,3030
 
-    # Eoi = ((w*Joi).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
-    # Eoj = ((w*Joj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
+    # Eoi = ((w*Joi).transpose(2,3).view(B,N,DO,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,3,3030
+    # Eoj = ((w*Joj).transpose(2,3).view(B,N,DO,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,18,3,3030
 
-    # w = w.view(B, N, ht*wd, -1)#1,14,3030,2
-    # r = r.view(B, N, ht*wd, -1)#1,14,3030,2
+    # w = w.view(B, N, ht*wd, -1)#1,18,3030,2
+    # r = r.view(B, N, ht*wd, -1)#1,18,3030,2
     # wk = torch.sum(w*r*Jz, dim=-1)#1,18,3030
     # Ck = torch.sum(w*Jz*Jz, dim=-1)#1,18,3030
     # kx, kk = torch.unique(ii, return_inverse=True)#
     # M = kx.shape[0]#5
 
     # Ec = safe_scatter_add_mat(Eci, ii, kk, P, M) + \
-    #     safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,15,6,3030
+    #     safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,36,6,3030
 
     # Eo = safe_scatter_add_mat(Eoi, ii, kk, P, M) + \
-    #     safe_scatter_add_mat(Eoj, jj, kk, P , M)#6,15,6,3030
+    #     safe_scatter_add_mat(Eoj, jj, kk, P , M)#1,36,3,3030
 
-    # C = safe_scatter_add_vec(Ck, kk, M)#1,5,3030
-    # w = safe_scatter_add_vec(wk, kk, M)#1,5,3030 
+    # C = safe_scatter_add_vec(Ck, kk, M).view(B,-1,1)#1,6,3030
+    # w = safe_scatter_add_vec(wk, kk, M).view(B,-1,1)#1,6,3030 
 
     # # C = C + 1e-7 #eta, 5,30,101
     # C = C + eta.view(*C.shape) + 1e-7
 
-    # Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
-    # Eo = Eo.view(B, N_car, P, M, D, ht*wd)#6,3,5,6,30*101
+    # Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:].permute(0,1,3,2,4)#1,5,7,6,30*101->1,5,6,7,30*101
+    # Eo = Eo.view(B, P, M, DO, ht*wd)[:, fixedp:].permute(0,1,3,2,4)#1,5,7,3,30*101->1,5,3,7,30*101
 
-    # E = torch.cat((Ec, Eo[:, 0, app[fixedp:]]), dim=1)
+    # E = torch.cat((Ec.reshape(B, (P-fixedp)*D, M, ht*wd), Eo.reshape(B, (P-fixedp)*DO, M, ht*wd)), dim=1)
 
-    # # ## 3: solve the system ###
-    # dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
-
+    # ## 3: solve the system ###
     dx = block_solve(H, v)
+    # dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
+    
+    camera_dx = dx[:,:(P-fixedp)*D].reshape(-1, P-fixedp, D)
+    object_dx = dx[:,(P-fixedp)*D:].reshape(-1, P-fixedp, DO)
+    dx0 = torch.zeros(1,P-fixedp,1, device = object_dx.device)
+    object_dx = torch.cat((object_dx[:,:,0].unsqueeze(-1),object_dx[:,:,1].unsqueeze(-1),dx0,
+                           dx0,dx0,object_dx[:,:,2].unsqueeze(-1)),
+                           dim = -1)
     print('update value is {}'.format(dx.mean().item()))
 
     P = P-fixedp
-    poses = pose_retr(poses, dx[:,:P], torch.arange(P).to(device=dx.device) + fixedp)
-    objectposes = pose_retr(objectposes, dx[:, P:], app[fixedp:])
+    poses = pose_retr(poses, camera_dx, torch.arange(P).to(device=dx.device) + fixedp)
+    objectposes = pose_retr(objectposes, object_dx, torch.arange(P).to(device=dx.device) + fixedp)
 
     # disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
     # disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
@@ -923,3 +819,106 @@ def midasBA(target, weight, objectposes, objectmask, app, validmask, eta, poses,
     midasdisps = midasdisps.clamp(min=0.0)
 
     return poses, objectposes, a, b, midasdisps
+
+
+# def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
+
+#     # app = app['apperance'][0][0]
+#     B, P, ht, wd = disps.shape#1,2,30,101
+#     N = ii.shape[0]#2
+#     D = poses.manifold_dim#6
+#     N_car = objectmask.shape[0]
+
+#     ### 1: co mpute jacobians and residuals ###
+#     coords, valid, (Jci, Jcj, Joi, Joj) = pops.dyprojective_transform(
+#         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, \
+#         objectmask = objectmask, Jacobian = True, batch = False)
+
+#     r = (target - coords)
+#     # residual = r[(valid*weight)[..., 0]>0.5]
+#     # print('residual is {}'.format(torch.mean((r))))
+
+#     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
+#     w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
+#     # w = .001*(valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
+#     # w = torch.ones_like(w)
+
+#     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+#     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+#     Joi = Joi.reshape(N_car, N, -1, D)#1,18,30,101,2,6->1,18,6060,6
+#     Joj = Joj.reshape(N_car, N, -1, D)#1,18,30,101,2,6->1,18,6060,6
+
+#     i = torch.arange(N).to('cuda')
+#     ii_scatter = i*P + ii
+#     jj_scatter = i*P + jj
+
+#     hc = scatter_sum(Jci, ii_scatter, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_scatter, dim = 1,dim_size= N*P)
+#     hc = hc.view(B, N, P, -1, D)#1,14,5,6060,6
+
+#     hoi = scatter_sum(Joi, ii_scatter, dim = 1, dim_size= N*P) + scatter_sum(Joj, jj_scatter, dim = 1, dim_size= N*P)
+#     hoi = hoi.view(B, N, P, -1, D)
+
+#     h = torch.cat((hc[:, :, fixedp:], hoi[:, :, fixedp:]), dim = 2)
+
+#     U = h.shape[2]
+#     k = hc.shape[3]
+
+#     h = h.transpose(2,3).contiguous().view(B, N, k, U*D)#2,14,8330,36
+#     wh= h*w#2,14,8330,36
+
+#     v = torch.matmul(wh.transpose(2,3), r)#2,14,36,8330    2,14,8330,1
+#     v = torch.sum(v, dim = 1).view(B,U,D)
+
+#     h = h.view(B, N*k, U*D)
+#     wh = wh.view(B, N*k, U*D)
+#     H = torch.matmul(wh.transpose(1,2), h)###weight乘了两次！！！
+#     H = H.view(B, U, D, U, D).transpose(2,3)
+
+#     # Jz = Jz.reshape(B, N, ht*wd, -1)#1,18,3030,2
+#     # # Jz = torch.zeros_like(Jz)
+
+#     # Eci = ((w*Jci).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
+#     # Ecj = ((w*Jcj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#1,14,6,3030
+
+#     # Eoi = ((w*Joi).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
+#     # Eoj = ((w*Joj).transpose(2,3).view(B,N,D,ht*wd,-1) * Jz[:,:,None]).sum(dim=-1)#6,14,6,3030
+
+#     # w = w.view(B, N, ht*wd, -1)#1,14,3030,2
+#     # r = r.view(B, N, ht*wd, -1)#1,14,3030,2
+#     # wk = torch.sum(w*r*Jz, dim=-1)#1,18,3030
+#     # Ck = torch.sum(w*Jz*Jz, dim=-1)#1,18,3030
+#     # kx, kk = torch.unique(ii, return_inverse=True)#
+#     # M = kx.shape[0]#5
+
+#     # Ec = safe_scatter_add_mat(Eci, ii, kk, P, M) + \
+#     #     safe_scatter_add_mat(Ecj, jj, kk, P, M)#1,15,6,3030
+
+#     # Eo = safe_scatter_add_mat(Eoi, ii, kk, P, M) + \
+#     #     safe_scatter_add_mat(Eoj, jj, kk, P , M)#6,15,6,3030
+
+#     # C = safe_scatter_add_vec(Ck, kk, M)#1,5,3030
+#     # w = safe_scatter_add_vec(wk, kk, M)#1,5,3030 
+
+#     # # C = C + 1e-7 #eta, 5,30,101
+#     # C = C + eta.view(*C.shape) + 1e-7
+
+#     # Ec = Ec.view(B, P, M, D, ht*wd)[:, fixedp:]#1,3,5,6,30*101
+#     # Eo = Eo.view(B, N_car, P, M, D, ht*wd)#6,3,5,6,30*101
+
+#     # E = torch.cat((Ec, Eo[:, 0, fixedp:]), dim=1)
+
+#     # # ## 3: solve the system ###
+#     # dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
+
+#     dx = block_solve(H, v)
+#     # print('update value is {}'.format(dx.mean().item()))
+
+#     P = P-fixedp
+#     poses = pose_retr(poses, dx[:,:P], torch.arange(P).to(device=dx.device) + fixedp)
+#     objectposes = pose_retr(objectposes, dx[:, P:], torch.arange(P).to(device=dx.device) + fixedp)
+
+#     # disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
+#     # disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
+#     # disps = disps.clamp(min=0.0)
+    
+#     return poses, objectposes

@@ -106,7 +106,8 @@ def compute_distance_matrix_flow(poses, disps, intrinsics):
     """ compute flow magnitude between all pairs of frames """
     if not isinstance(poses, SE3):
         poses = torch.from_numpy(poses).float().cuda()[None]
-        poses = SE3(poses).inv()
+        ##input w2c
+        poses = SE3(poses)
 
         disps = torch.from_numpy(disps).float().cuda()[None]
         intrinsics = torch.from_numpy(intrinsics).float().cuda()[None]
@@ -149,19 +150,21 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
     for id, info in object.items():
         indexlist = info[0]
 
-        objectmasks = torch.from_numpy(info[2])
+        objectmasks = torch.from_numpy(info[2])[:, 8//2::8, 8//2::8]
         disps = torch.from_numpy(alldisps[indexlist]).float()
 
         depths =  1.0/disps
 
         objectdisps = disps*objectmasks
         objectdepths  = depths*objectmasks
-        mean = objectdepths.sum((1,2))/objectmasks.sum((1,2))
-        min = 1.0/objectdisps.amax((1,2))
+        # mean = objectdepths.sum((1,2))/objectmasks.sum((1,2))
+
+        app = torch.count_nonzero(objectmasks, dim = (1,2))
+        min = 1.0/(objectdisps.amax((1,2)))
         max = objectdepths.amax((1,2))
 
         #如何评价遮挡
-        valid = (min > 2.0) * (max < 30.0)
+        valid = (min > 0.2) * (max < 30.0) *(app > 30)
 
         #如果剩下的车不到五帧，就放弃这辆车
         if len(valid[valid>0])<5:
@@ -189,7 +192,7 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
         MAX_FLOW = 100.0
         matrix = np.zeros((N, N), dtype=np.float32)
 
-        s = (N*N)//10
+        s = 2048
         for i in range(0, ii.shape[0], s):
             #trackid = 6, 66帧有明显的边界
             flow1, val1 = pops.induced_object_flow(poses, disps, intrinsics, objectposes, objectmasks, ii[i:i+s], jj[i:i+s])
@@ -212,7 +215,7 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
             val = val.view(val.shape[1], -1)
             mask = mask.view(mask.shape[1], -1)
             masksum = mask.sum(-1)
-            validsum =  (val*mask).sum(-1)
+            validsum = (val*mask).sum(-1)
 
             mag = (mag*val*mask).sum(-1) / validsum
             mag[validsum/masksum < 0.7] = np.inf

@@ -23,6 +23,7 @@ from .augmentation import RGBDAugmentor
 from .rgbd_utils import *
 from torch_scatter import scatter_sum
 from geom.projective_ops import coords_grid, crop, batch_grid
+from geom.flow_vis_utils import write_depth
 
 NCAR = 135
 
@@ -40,12 +41,13 @@ class RGBDDataset(data.Dataset):
         self.obfmin = obfmin # exclude very easy examples
         self.obfmax = obfmax # exclude very hard examples
 
-        self.h1 = 240
-        self.w1 = 808
+        self.h1 = 360
+        self.w1 = 640
         self.scale = 8
         self.cropscale = 2
 
-        self.alltrackid = [1,2,3]
+        # self.alltrackid = [1,2,3]
+        self.alltrackid = [1,2]
         
         if do_aug:
             self.aug = RGBDAugmentor(crop_size=crop_size)
@@ -74,7 +76,7 @@ class RGBDDataset(data.Dataset):
             # dataset_index = []
             objectinfo = self.scene_info[scene]['object']
             cameragraph = self.scene_info[scene]['graph']
-            for id in self.alltrackid:
+            for id in list(objectinfo.keys()):
                 objectgraph = objectinfo[id][3]
                 frameidx_list = objectinfo[id][0]
                 for i in objectgraph:
@@ -234,6 +236,9 @@ class RGBDDataset(data.Dataset):
         intrinsics = np.array(intrinsics) / f
         
         disps = np.stack(list(map(read_disp, depths)), 0)
+        #visualzie depth
+        # for i in range(disps.shape[0]):
+        #     write_depth(os.path.join('../DeFlowSLAM/datasets/cofusion/room4-full/depth_visualize', str(i)), disps[i], False)
         d = f * compute_distance_matrix_flow(poses, disps, intrinsics)
 
         # uncomment for nice visualization
@@ -251,7 +256,7 @@ class RGBDDataset(data.Dataset):
     def build_object_frame_graph(self, poses, depths, intrinsics, object, f=8, max_flow=100):
         """ compute optical flow distance between all pairs of frames """
         def read_disp(fn):
-            depth = self.__class__.vkittidepth_read(fn)[0]
+            depth = self.__class__.depth_read(fn)[f//2::f, f//2::f]
             depth[depth < 0.01] = np.mean(depth)
             return 1.0 / depth
 
@@ -264,7 +269,7 @@ class RGBDDataset(data.Dataset):
         # uncomment for nice visualization
         # import matplotlib.pyplot as plt
         # for i in range(len(d)):
-        #     plt.imshow(d[i])
+        #     # plt.imshow(d[i])
         #     plt.savefig('./result/matrix/trackid_{}.png'.format(i), bbox_inches='tight')
 
         for n, key in enumerate(object.keys()):
@@ -281,7 +286,7 @@ class RGBDDataset(data.Dataset):
 
         index = index % len(self.dataset_index)
 
-        # index = 10
+        # index = 50
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
         objectgraph = objectinfo[trackid][3]
@@ -292,7 +297,7 @@ class RGBDDataset(data.Dataset):
         poses_list = self.scene_info[scene_id]['poses']
         intrinsics_list = self.scene_info[scene_id]['intrinsics']
         insmasks_list = self.scene_info[scene_id]['objectmasks']
-        midasdepth_list = self.scene_info[scene_id]['midasdepth']
+        # midasdepth_list = self.scene_info[scene_id]['midasdepth']
 
         frameidx_list = objectinfo[trackid][0]
         objectposes_list = objectinfo[trackid][1]
@@ -303,51 +308,54 @@ class RGBDDataset(data.Dataset):
             # get other frames within flow threshold
             k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
             object_frames = objectgraph[ix][0][k]
+            # print('object flow {}'.format(frameidx_list[object_frames]))
 
             camera_idx = frameidx_list[ix]
             m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
             camera_frames = frame_graph[camera_idx][0][m]
+            # print('camera flow {}'.format(camera_frames))
 
             intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
             frames = np.isin(frameidx_list, intersect).nonzero()[0]
+            # print(frames)
+            in20 = (np.abs(frames-ix)<20)
 
-            if np.count_nonzero(frames[frames > ix]):
-                ix = np.random.choice(frames[frames > ix])
-            
-            elif np.count_nonzero(frames):
+            if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
+                ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
+                # print(ix)
+            elif np.count_nonzero(frames[in20]):
+                ix = np.random.choice(frames[in20])
+                # print(ix)
+            else:
                 ix = np.random.choice(frames)
-            
+                # print(ix)
             inds += [ ix ]
-        # inds = [10, 12, 13, 14, 15, 16]
+        # inds = [50, 58, 67, 75, 79, 89, 95]
         inds = np.array(inds)
 
-        # print('scene is {}'.format(scene_id))
-        # print('trackid is {}'.format(trackid))
-        # print('frames are {}'.format(inds))
-        # print('camera frames are {}'.format(frameidx_list[inds]))
+        print('scene is {}'.format(scene_id))
+        print('trackid is {}'.format(trackid))
+        print('frames are {}'.format(inds))
+        print('camera frames are {}'.format(frameidx_list[inds]))
         # for i in range(len(inds)-1):
         #     camera_frame = frameidx_list[inds[i]]
-        #     next_ca_fream = frameidx_list[inds[i+1]]
+        #     next_ca_frame = frameidx_list[inds[i+1]]
         #     print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
-        #     print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_fream]))
-        
-        # inds =np.sort(inds)
+        #     print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_frame]))
 
         #读取mask并确定要追踪的车的id
         images, depths, poses, intrinsics, objectmasks, objectposes, insmasks, highdepths, midasdepths = [], [], [], [], [], [], [], [], []
         for i in inds:
             images.append(self.__class__.image_read(images_list[frameidx_list[i]]))
-            depth, highdepth = self.__class__.vkittidepth_read(depths_list[frameidx_list[i]])#1/8 resolution, 1/2 resolution
-            depths.append(depth)
-            highdepths.append(highdepth)
+            depths.append(self.__class__.depth_read(depths_list[frameidx_list[i]]))#1/8 resolution, 1/2 resolution
+            # depths.append(depth)
+            # highdepths.append(highdepth)
             poses.append(poses_list[frameidx_list[i]])
             intrinsics.append(intrinsics_list[frameidx_list[i]])
-            midasdepths.append(self.read_pfm(midasdepth_list[frameidx_list[i]])[0])
+            # midasdepths.append(self.read_pfm(midasdepth_list[frameidx_list[i]])[0])
             objectmasks.append(objectmasks_list[i])
             objectposes.append(objectposes_list[i])
-
-            # objectmasks.append(self.__class__.objectmask_read(objectmasks_list[i])[0])
-            insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]])[0])#1 resolution
+            insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]]))#1 resolution
 
         images = np.stack(images).astype(np.float32)
         depths = np.stack(depths).astype(np.float32)
@@ -356,27 +364,27 @@ class RGBDDataset(data.Dataset):
 
         objectmasks = np.stack(objectmasks).astype(np.float32)
         objectposes = np.stack(objectposes).astype(np.float32)
-        highdepths = np.stack(highdepths).astype(np.float32)
-        midasdepths = np.stack(midasdepths).astype(np.float32)
+        # highdepths = np.stack(highdepths).astype(np.float32)
+        # midasdepths = np.stack(midasdepths).astype(np.float32)
 
         insmasks = np.stack(insmasks).astype(np.float32)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].copy()
-        #     vis_image[np.isin(insmasks[n], trackid+1)] = np.array([255.0,255.0,255.0])
+        #     vis_image[np.isin(insmasks[n], trackid)] = np.array([255.0,255.0,255.0])
         #     cv2.imwrite('./result/object/mask_'+ str(n)+'.png', vis_image)
 
         images = torch.from_numpy(images)
         _, h0, w0 = images.shape[:3]
 
         depths = torch.from_numpy(depths)
-        highdepths = torch.from_numpy(highdepths)
-        midasdepths = torch.from_numpy(midasdepths)
+        # highdepths = torch.from_numpy(highdepths)
+        # midasdepths = torch.from_numpy(midasdepths)
 
         poses = torch.from_numpy(poses)
         objectmasks = torch.from_numpy(objectmasks)
         objectposes = torch.from_numpy(objectposes)
-        insmasks = torch.from_numpy(insmasks)
+        # insmasks = torch.from_numpy(insmasks)
         intrinsics = torch.from_numpy(intrinsics)
         intrinsics[:, 0:2] *= ((self.w1//self.scale)/ w0)
         intrinsics[:, 2:4] *= ((self.h1//self.scale)/ h0)
@@ -388,17 +396,20 @@ class RGBDDataset(data.Dataset):
             highimages = self.aug(images)
         # highimages = images
 
-        lowimages = torch.nn.functional.interpolate(highimages, size = (self.h1//2,self.w1//2), mode = 'bilinear')
+        # lowimages = torch.nn.functional.interpolate(highimages, size = (self.h1//2,self.w1//2), mode = 'bilinear')
 
         corners, recs = [], []
-        insmask = torch.nn.functional.interpolate(insmasks[:, None], size = (self.h1//2, self.w1//2)).squeeze(1)
-        highmask = torch.where(insmask == (trackid+1.0), 1.0, 0.0)
+        highmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1//2, self.w1//2)).squeeze(1)
+        lowmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
+        # highmask = torch.where(insmask == (trackid+1.0), 1.0, 0.0)
         mask = highmask.clone()
         for level in range(3):
             corner, rec = self.cornerinfo(highmask)
             highmask = torch.nn.functional.interpolate(highmask[:, None], size = (self.h1//(2**(level+2)), self.w1//(2**(level+2)))).squeeze(1)
             corners.append(corner)
             recs.append(rec)
+        corners = torch.stack(corners)
+        recs = torch.stack(recs)
         
         # img = lowimages.permute(0,2,3,1).numpy().astype(np.uint8).copy()
         # reccorner = corners[0].tolist()
@@ -408,29 +419,27 @@ class RGBDDataset(data.Dataset):
         #     cv2.imwrite('./result/crop/'+str(frameidx_list[inds][i])+'.png',img[i])
 
         #normalize
-        midasdepths = torch.nn.functional.interpolate(midasdepths[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
+        depths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
+        highdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//2, self.w1//2)).squeeze(1)
+        # for i in range(depths.shape[0]):
+        #     write_depth('./result/depth/'+str(frameidx_list[inds][i])+'.png', depths[i], False)
+        #     write_depth('./result/depth/'+str(frameidx_list[inds][i])+'_high.png', highdepths[i], False)
+        
         disps = 1.0/depths
         highdisps = 1.0/highdepths
 
-        m_s = midasdepths[midasdepths>0].mean()
-        midasdepths = midasdepths / m_s
-            
-        batchgrid = batch_grid(corners[0], recs[0])
-        Apperance = [torch.arange(self.n_frames)]
+        # m_s = highmidasdepths[highmidasdepths>0].mean()
+        # lowmidasdepths = lowmidasdepths / m_s
+        # highmidasdepths = highmidasdepths / m_s
+
         trackinfo = {
-            'trackid': torch.tensor([trackid]).to('cuda'),
-            'apperance': [x.to('cuda') for x in Apperance],
-            'frames': torch.from_numpy(frameidx_list[inds]).to('cuda'),
-            'corner': [x.to('cuda') for x in corners],
-            'rec': [x.to('cuda') for x in recs],
-            'grid': tuple(t.to('cuda') for t in batchgrid)
+            'frames': torch.from_numpy(frameidx_list[inds]),
+            'corner': corners,
+            'rec': recs,
         }
 
         depth_valid = (0.2<1/disps)*(1/disps<50)
-        high_depth_valid = (0.2<1/highdisps)*(1/highdisps<50)
-        
-        # disps = (disps - disps.min()) / (disps.max() - disps.min())
-        # midasdepths = (midasdepths - midasdepths.min()) / (midasdepths.max() - midasdepths.min())
+        high_depth_valid = (0.2<1/highdisps)*(1/highdisps<50)        
         
         if len(disps[disps>0.01]) > 0:
             s = disps[disps>0.01].mean()
@@ -439,41 +448,27 @@ class RGBDDataset(data.Dataset):
             poses[...,:3] *= s
             objectposes[...,:3] *= s
 
-        a1_list, b1_list = [], []
-        for i in range(disps.shape[0]):
-            # write_depth('result/val/midas'+str(frameidx_list[inds][i]), midasdepths[i].numpy(), False)
-            # write_depth('result/val/gt'+str(frameidx_list[inds][i]), disps[i].numpy(), False)
-            m_depth = (disps[i])[depth_valid[i]].median()
-            m_midas = (midasdepths[i])[depth_valid[i]].median()
-            a1 = m_depth/m_midas
-            b1 = ((disps[i])[depth_valid[i]] - a1*(midasdepths[i])[depth_valid[i]]).mean()
-            a1_list.append(a1)
-            b1_list.append(b1)
-
         # a_list, b_list = [], []
         # for i in range(disps.shape[0]):
-        #     write_depth('result/val/midas'+str(frameidx_list[inds][i]), midasdepths[i].numpy(), False)
-        #     write_depth('result/val/gt'+str(frameidx_list[inds][i]), disps[i].numpy(), False)
-        #     depth = disps[i].reshape(-1)
-        #     midepth = midasdepths[i].reshape(-1)
-
+        #     depth = highdisps[i].reshape(-1)
+        #     midepth = highmidasdepths[i].reshape(-1)
         #     midepth = torch.stack((midepth, torch.ones_like(midepth)), dim=1)
         #     left = torch.linalg.inv(torch.matmul(midepth.transpose(1,0), midepth))
         #     right = torch.matmul(midepth.transpose(1,0), depth)
         #     solve = torch.matmul(left, right)
         #     a, b = solve[0], solve[1]
-        #     depth_s = a*midepth[:,0]+b
-        #     re_error = ((depth - depth_s)).abs().mean()
-        #     print('relative error is {}'.format(re_error))
         #     a_list.append(a)
         #     b_list.append(b)
-        a = torch.stack(a1_list, dim=0)[..., None, None]
-        b = torch.stack(b1_list, dim=0)[..., None, None]
 
-        return highimages.to('cuda'), lowimages.to('cuda'), poses.to('cuda'), objectposes.to('cuda'), \
-            objectmasks.to('cuda'), disps.to('cuda'), highdisps.to('cuda'), midasdepths.to('cuda'),\
-            mask.to('cuda'), intrinsics.to('cuda'), trackinfo, s.to('cuda'), a.to('cuda'), b.to('cuda'), \
-            depth_valid.to('cuda'), high_depth_valid.to('cuda')
+        # a = torch.stack(a_list, dim=0)[..., None, None]
+        # b = torch.stack(b_list, dim=0)[..., None, None]
+        # highmidasdepths = a*highmidasdepths+b
+        # lowmidasdepths = a*lowmidasdepths+b
+
+        return (highimages, poses, objectposes, \
+            lowmask, disps, highdisps,\
+            mask, intrinsics, s, \
+            depth_valid, high_depth_valid), trackinfo
 
     def __len__(self):
         return len(self.dataset_index)

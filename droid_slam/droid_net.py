@@ -10,7 +10,7 @@ from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
 from lietorch import SE3, SO3, Sim3
-from geom.ba import BA, dynamicBA, fulldynamicBA, cameraBA, midasBA
+from geom.ba import BA, dynamicBA, cameraBA, midasBA
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
@@ -118,12 +118,12 @@ class UpdateModule(nn.Module):
             nn.Conv2d(128, 64, 3, padding=1),
             nn.ReLU(inplace=True))
 
-        # self.weight = nn.Sequential(
-        #     nn.Conv2d(128, 128, 3, padding=1),
-        #     nn.ReLU(inplace=True),
-        #     nn.Conv2d(128, 2, 3, padding=1),
-        #     GradientClip(),
-        #     nn.Sigmoid())
+        self.weight = nn.Sequential(
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 2, 3, padding=1),
+            GradientClip(),
+            nn.Sigmoid())
 
         # self.dyweight = nn.Sequential(
         #     nn.Conv2d(128, 128, 3, padding=1),
@@ -139,7 +139,7 @@ class UpdateModule(nn.Module):
             GradientClip())
 
         self.gru = ConvGRU(128, 128+128+64)
-        # self.agg = GraphAgg()
+        self.agg = GraphAgg()
 
         # self.mask_flow = nn.Sequential(
         #     nn.Conv2d(128, 256, 3, padding=1),
@@ -171,13 +171,13 @@ class UpdateModule(nn.Module):
 
         ### update variables ###
         delta = self.delta(net).view(*output_dim)
-        # weight = self.weight(net).view(*output_dim)
+        weight = self.weight(net).view(*output_dim)
         # dyweight = self.dyweight(net).view(*output_dim)
         # mask_flow = .25*self.mask_flow(net).view(*output_dim)
         # mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
         delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
-        # weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
+        weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
         # dyweight = dyweight.permute(0,1,3,4,2)[...,:2].contiguous()
 
         net = net.view(*output_dim)
@@ -187,7 +187,7 @@ class UpdateModule(nn.Module):
         #     return net, delta, weight, eta
 
         # else:
-        return net, delta
+        return net, delta, weight
 
 
 class DroidNet(nn.Module):
@@ -221,12 +221,12 @@ class DroidNet(nn.Module):
         return [fmaps, fmaps_high], [net, net_high], [inp, inp_high]
 
 
-    def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, lowimages, objectmasks, highmasks, \
-                disps, gtdisps, midasdisps, highgtdisps, intrinsics, trackinfo, a, b, depth_valid, high_depth_valid, save, total_steps, graph=None, num_steps=12, fixedp=2):
+    def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, highmasks, \
+                disps, gtdisps, highgtdisps, intrinsics, trackinfo, depth_valid, high_depth_valid, save, total_steps, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
         #Ps is ground truth
-        corners = [x[0] for x in trackinfo['corner']]
-        recs = [x[0] for x in trackinfo['rec']]
+        corners = trackinfo['corner'][0]
+        recs = trackinfo['rec'][0]
 
         ii, jj, _ = graph_to_edge_list(graph)
 
@@ -235,24 +235,17 @@ class DroidNet(nn.Module):
 
         validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
-        # highcoords0 = pops.coords_grid(120, 404, device=images.device)
-
         gtflow, gtmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
-        # gtflow = torch.normal(mean=gtflow, std=1e-1)
-        # gtmask = depth_valid[:, ii, ..., None]
-        depth_valid = depth_valid[:, ii, ..., None]
-        # highgtflow, highmask = pops.dyprojective_transform(Ps, highgtdisps, highintrinsics, ii, jj, validmask, ObjectPs, highmasks)
-        # highgtflow -= highcoords0
-        # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
+
+        # depth_valid = depth_valid[:, ii, ..., None]
         fmaps, net_all, inp_all = self.extract_features(images, corners, recs)
 
         ht, wd = images.shape[-2:]
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
-        coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
 
         all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, all_static_residual_list = [], [], [], [], []
 
-        objectmasks_list, weight_list, all_weight_list, valid_list, intrinsics_list = [], [], [], [], []
+        # objectmasks_list, weight_list, all_weight_list, valid_list, intrinsics_list = [], [], [], [], []
 
         print('-----')
         print('before optimization')
@@ -267,8 +260,9 @@ class DroidNet(nn.Module):
         print('ob_r_err is {}'.format(ob_r_err.item()))
         print('ob_t_err is {}'.format(ob_t_err.item()))
         print('-----')
-        
+	
         for index in range(2):
+            coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
 
             target = coords1.clone()
@@ -291,10 +285,11 @@ class DroidNet(nn.Module):
                 motion = torch.cat([flow, resd], dim=-1)
                 motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
-                net, delta = \
+                net, delta, weight = \
                     self.update(net, inp, corr, motion, ii, jj)
 
-                # print('predicted weight is {}'.format(weight.mean().item()))
+                print('predicted weight is {}'.format(weight.mean().item()))
+                print('predicted dynamic weight is {}'.format(weight[objectmasks[:,ii]>0.5].mean().item()))
                 print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
                 target = coords1 + delta
                 print('predicted flow delta is {}'.format(delta.mean().item()))
@@ -302,7 +297,7 @@ class DroidNet(nn.Module):
                 #     Gs, ObjectGs, a, b, midasdisps = midasBA(gtflow, gtmask, ObjectGs, objectmasks, trackinfo, validmask, \
                 #                                     eta, Gs, gtdisps, midasdisps, intrinsics, ii, jj, a, b, fixedp=2)
                 for i in range(2):
-                    Gs, ObjectGs = dynamicBA(target, depth_valid, ObjectGs, objectmasks, trackinfo, validmask, \
+                    Gs, ObjectGs = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
                                                     None, Gs, disps, intrinsics, ii, jj, fixedp=2)
                 # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
                 coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
@@ -330,10 +325,10 @@ class DroidNet(nn.Module):
             print('ob_t_err is {}'.format(ob_t_err.item()))
             print('-----')
 
-            intrinsics_list.append(intrinsics)
-            all_weight_list.append(weight_list)
-            objectmasks_list.append(objectmasks)
-            valid_list.append(depth_valid)
+            # intrinsics_list.append(intrinsics)
+            # all_weight_list.append(weight_list)
+            # objectmasks_list.append(objectmasks)
+            # valid_list.append(depth_valid)
             all_Gs_list.append(Gs_list)
             all_ObGs_list.append(ObGs_list)
             all_disp_list.append(disp_list)
@@ -352,20 +347,24 @@ class DroidNet(nn.Module):
             objectmasks = pops.crop(highmasks, corners[0], recs[0])
 
             # upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
-            upsampled_disps = upsample4(disps.unsqueeze(-1), True).squeeze(-1)
-            disps = pops.crop(upsampled_disps, corners[0], recs[0])
-            depth_valid = pops.crop(high_depth_valid, corners[0], recs[0])[:, ii, ..., None]
+            # upsampled_disps = upsample4(disps.unsqueeze(-1), True).squeeze(-1)
+            disps = pops.crop(highgtdisps, corners[0], recs[0])
+            # gtdisps = pops.crop(highgtdisps, corners[0], recs[0])
+            # disps = pops.crop(midasdisps, corners[0], recs[0])
+            # disps = gtdisps
+            # depth_valid = pops.crop(high_depth_valid, corners[0], recs[0])[:, ii, ..., None]
 
             # upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
-            upsampled_flow = upsample4(coords1 - coords0, False)
+            # upsampled_flow = upsample4(coords1 - coords0, False)
             coords0 = pops.coords_grid(recs[0][0], recs[0][1], device=coords1.device)
-            coords1 = pops.crop(upsampled_flow, corners[0], recs[0]) + coords0
+            # coords1 = pops.crop(upsampled_flow, corners[0], recs[0]) + coords0
 
             intrinsics[...,:] *= 4
             intrinsics[..., 2] -= corners[0][1]
             intrinsics[..., 3] -= corners[0][0]
-            gtflow, _ = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+            gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
+            # print('----------')
             # # gtflow = pops.crop(highgtflow, corners[0], recs[0]) + coords0
             # # gtmask = pops.crop(highmask, corners[0], recs[0])
             # gtcropdisps = pops.crop(highgtdisps, corners[0], recs[0])
@@ -405,18 +404,6 @@ class DroidNet(nn.Module):
             #     cropsampledflow = flow_to_image(coords1[0,i].cpu().numpy(), cropgtmask[0,i,...,0].cpu().numpy())
             #     cv2.imwrite('./result/multiscale/cropupsampledflow_{}.png'.format(i),cropsampledflow)
             
-            # print('-----')
-            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
-
-            # dynaflow = objectmasks[:,ii].long()
-
-            # print('-----------------')
-            # max_depth = (1/gtdisps).max()
-            # depth_vis(gtdisps,'gt', max_depth)
-            # depth_vis(disps,'dy', max_depth)
-            # # depth_vis(gtdisps*masks,'filtered',max_depth)
-
             # # dynaflow2 = dynaflow.clone()
             # # dynaflow2[:,:2] = 0.0
             # diff_flow = (target - lowgtflow)
@@ -429,26 +416,11 @@ class DroidNet(nn.Module):
             # error_dyan_depth = torch.mean(torch.abs(diff_disps[objectmasks.long()>0.0]))
             # error_static_depth = torch.mean(torch.abs(diff_disps))
 
-            # print('static depth error is {}'.format(error_static_depth))
-            # print('dynamic depth error is {}'.format(error_dyan_depth))
-
-            # print('static flow error is {}'.format(error_static_flow))
-            # print('dynamic flow error is {}'.format(error_dyna_flow))
-
             # # for i in range(target.shape[1]):
             # #     error_flow = torch.mean(torch.abs(diff_flow[:,i][dynaflow[:,i]>0.0]))
             # #     print('error of dynamic flow' + str(i) + ' is {}'.format(error_flow))
 
             # print('overall depth is {}'.format(1.0/torch.mean(gtdisps[objectmasks>0.0])))
-            # print('frames are {}'.format(trackinfo['frames']))
-            # print('trackid is {}'.format(trackinfo['trackid'].item()))
-            # print('loss is {}'.format(loss.item()))
-            # print('r_err is {}'.format(r_err.item()))
-            # print('t_err is {}'.format(t_err.item()))
-
-            # print('ob_loss is {}'.format(ob_loss.item()))
-            # print('ob_r_err is {}'.format(ob_r_err.item()))
-            # print('ob_t_err is {}'.format(ob_t_err.item()))
 
             # weight_vis = valid[...,0]*weight[...,0]
             # weight_vis[weight_vis>0.5] = 1.0
@@ -467,7 +439,6 @@ class DroidNet(nn.Module):
             
             # if ob_r_err.item()>0.1:
             #     print('bad optimization!')
-
         
         return all_Gs_list, all_ObGs_list, all_disp_list, all_static_residual_list, all_flow_list
 
@@ -537,8 +508,8 @@ def geoloss(objectposes, object_est, ii, jj):
     dP = objectposes[:,jj] * objectposes[:,ii].inv()
     dG = object_est[:,jj] * object_est[:,ii].inv()
 
-    s = fit_scale(dP, dG)
-    dG = dG.scale(s[:,None])
+    # s = fit_scale(dP, dG)
+    # dG = dG.scale(s[:,None])
 
     d = (dG * dP.inv()).log()
 
