@@ -285,7 +285,7 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='car4-3dof-full', help='name your experiment')
+    parser.add_argument('--name', default='car4-6dof-gtdepth', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/cofusion', help="path to dataset directory")
