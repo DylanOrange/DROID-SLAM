@@ -132,10 +132,10 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
             = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
                                 objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
 
-            loss = 0.5*(args.w1 * geo_loss[0] + args.w1 * 5* Obgeo_loss[0] + \
+            loss = 0.5*(args.w1 * geo_loss[0] + args.w1 * Obgeo_loss[0] + \
                 args.w2 * static_resi_loss[0] +\
                 args.w3 * error_induced_low) +\
-                args.w1 * geo_loss[1] + args.w1 * 5* Obgeo_loss[1] + \
+                args.w1 * geo_loss[1] + args.w1 * Obgeo_loss[1] + \
                 args.w2 * static_resi_loss[1] +\
                 args.w3 * error_induced_high
             
@@ -285,7 +285,7 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='car4-6dof-gtdepth', help='name your experiment')
+    parser.add_argument('--name', default='car4-6dof-gtdepth-smob', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/cofusion', help="path to dataset directory")
