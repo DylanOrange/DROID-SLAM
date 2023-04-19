@@ -242,7 +242,7 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
     Gij = poses[:, jj] * poses[:, ii].inv()
     # print(Gij.data)
     Gij.data[:, ii == jj] = torch.as_tensor(
-        [-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device)
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device)
 
     validobjectmask = objectmask[:, ii]*validmask[..., None, None]#2,12,30,101
     # objectmask = objectmask[:, ii]#2,12,30,101
@@ -250,7 +250,7 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
     Gijobject =  poses[:, jj] * objectposes[:, jj].inv() * objectposes[:, ii] * poses[:, ii].inv()#2,12,1
     Gjj = poses[:, jj] * objectposes[:, jj].inv()#2,12,1
     Gijobject.data[:, ii == jj] = torch.as_tensor(
-        [-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device) 
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device) 
 
     #X1, with object X2, without object
     X1, J1 = dyactp(Gij, X0, Gijobject = Gijobject, objectmask = validobjectmask, fullmask = fullmask, jacobian = Jacobian, batch = batch)
@@ -275,7 +275,7 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
         Joj = -Joi
 
         Jdof = torch.zeros(6,3, device = Joi.device)
-        Jdof[0,0] = Jdof[1,1] = Jdof[5,2] = 1
+        Jdof[0,0] = Jdof[2,1] = Jdof[4,2] = 1
 
         # Joi = Joi*validobjectmask[..., None, None]
         # Joj = Joj*validobjectmask[..., None, None]

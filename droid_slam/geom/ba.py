@@ -511,8 +511,8 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     camera_dx = dx[:,:(P-fixedp)*D].reshape(-1, P-fixedp, D)
     object_dx = dx[:,(P-fixedp)*D:].reshape(-1, P-fixedp, DO)
     dx0 = torch.zeros(1,P-fixedp,1, device = object_dx.device)
-    object_dx = torch.cat((object_dx[:,:,0].unsqueeze(-1),object_dx[:,:,1].unsqueeze(-1),dx0,
-                           dx0,dx0,object_dx[:,:,2].unsqueeze(-1)),
+    object_dx = torch.cat((object_dx[:,:,0].unsqueeze(-1),dx0, object_dx[:,:,1].unsqueeze(-1),
+                           dx0,object_dx[:,:,2].unsqueeze(-1),dx0),
                            dim = -1)
     print('update value is {}'.format(dx.mean().item()))
 

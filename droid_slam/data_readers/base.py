@@ -42,7 +42,7 @@ class RGBDDataset(data.Dataset):
         self.obfmax = obfmax # exclude very hard examples
 
         self.h1 = 360
-        self.w1 = 640
+        self.w1 = 1200
         self.scale = 8
         self.cropscale = 2
 
@@ -238,7 +238,7 @@ class RGBDDataset(data.Dataset):
         disps = np.stack(list(map(read_disp, depths)), 0)
         #visualzie depth
         # for i in range(disps.shape[0]):
-        #     write_depth(os.path.join('../DeFlowSLAM/datasets/cofusion/room4-full/depth_visualize', str(i)), disps[i], False)
+        #     write_depth(os.path.join('../DeFlowSLAM/datasets/vkitti/room4-full/depth_visualize', str(i)), disps[i], False)
         d = f * compute_distance_matrix_flow(poses, disps, intrinsics)
 
         # uncomment for nice visualization
@@ -269,7 +269,7 @@ class RGBDDataset(data.Dataset):
         # uncomment for nice visualization
         # import matplotlib.pyplot as plt
         # for i in range(len(d)):
-        #     # plt.imshow(d[i])
+        #     plt.imshow(d[i])
         #     plt.savefig('./result/matrix/trackid_{}.png'.format(i), bbox_inches='tight')
 
         for n, key in enumerate(object.keys()):
@@ -296,7 +296,7 @@ class RGBDDataset(data.Dataset):
         depths_list = self.scene_info[scene_id]['depths']
         poses_list = self.scene_info[scene_id]['poses']
         intrinsics_list = self.scene_info[scene_id]['intrinsics']
-        insmasks_list = self.scene_info[scene_id]['objectmasks']
+        # insmasks_list = self.scene_info[scene_id]['objectmasks']
         # midasdepth_list = self.scene_info[scene_id]['midasdepth']
 
         frameidx_list = objectinfo[trackid][0]
@@ -318,7 +318,7 @@ class RGBDDataset(data.Dataset):
             intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
             frames = np.isin(frameidx_list, intersect).nonzero()[0]
             # print(frames)
-            in20 = (np.abs(frames-ix)<20)
+            in20 = np.logical_and(np.abs(frames-ix)<20, 0<np.abs(frames-ix))
 
             if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
                 ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
@@ -355,7 +355,7 @@ class RGBDDataset(data.Dataset):
             # midasdepths.append(self.read_pfm(midasdepth_list[frameidx_list[i]])[0])
             objectmasks.append(objectmasks_list[i])
             objectposes.append(objectposes_list[i])
-            insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]]))#1 resolution
+            # insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]]))#1 resolution
 
         images = np.stack(images).astype(np.float32)
         depths = np.stack(depths).astype(np.float32)
@@ -367,7 +367,7 @@ class RGBDDataset(data.Dataset):
         # highdepths = np.stack(highdepths).astype(np.float32)
         # midasdepths = np.stack(midasdepths).astype(np.float32)
 
-        insmasks = np.stack(insmasks).astype(np.float32)
+        # insmasks = np.stack(insmasks).astype(np.float32)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].copy()
@@ -419,14 +419,15 @@ class RGBDDataset(data.Dataset):
         #     cv2.imwrite('./result/crop/'+str(frameidx_list[inds][i])+'.png',img[i])
 
         #normalize
-        depths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
+        lowdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
         highdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//2, self.w1//2)).squeeze(1)
-        # for i in range(depths.shape[0]):
-        #     write_depth('./result/depth/'+str(frameidx_list[inds][i])+'.png', depths[i], False)
-        #     write_depth('./result/depth/'+str(frameidx_list[inds][i])+'_high.png', highdepths[i], False)
         
-        disps = 1.0/depths
+        disps = 1.0/lowdepths
         highdisps = 1.0/highdepths
+
+        # for i in range(depths.shape[0]):
+        #     write_depth('./result/depth/'+str(frameidx_list[inds][i])+'.png', disps[i], False)
+        #     write_depth('./result/depth/'+str(frameidx_list[inds][i])+'_high.png', highdisps[i], False)
 
         # m_s = highmidasdepths[highmidasdepths>0].mean()
         # lowmidasdepths = lowmidasdepths / m_s

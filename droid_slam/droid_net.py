@@ -235,7 +235,7 @@ class DroidNet(nn.Module):
 
         validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
-        gtflow, gtmask = pops.dyprojective_transform(Ps, gtdisps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
         # depth_valid = depth_valid[:, ii, ..., None]
         fmaps, net_all, inp_all = self.extract_features(images, corners, recs)

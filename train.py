@@ -15,7 +15,7 @@ from data_readers.factory import dataset_factory
 from lietorch import SO3, SE3, Sim3
 from geom import losses
 from geom.losses import geodesic_loss, residual_loss, flow_loss
-from geom.graph_utils import build_frame_graph
+from geom.graph_utils import build_frame_graph, build_object_frame_graph
 
 # network
 from droid_net import DroidNet
@@ -62,7 +62,7 @@ def load_weights(model, weights):
 def step(model, item, mode, logger, skip, save, total_steps, args):
 
     images, poses, objectposes, objectmasks, disps, \
-        highdisps, highmask, intrinsics, scale, depth_valid, high_depth_valid = [x.to('cuda') for x in item[0]]
+		highdisps, highmask, intrinsics, scale, depth_valid, high_depth_valid = [x.to('cuda') for x in item[0]]
     trackinfo = item[1]
     for key in trackinfo.keys():
         trackinfo[key] = trackinfo[key].to('cuda')
@@ -74,7 +74,10 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
     
     Gs = SE3.IdentityLike(Ps)
     ObjectGs = SE3.IdentityLike(ObjectPs)
-
+	
+    # if np.random.rand() < 0.5:
+    #     graph = build_object_frame_graph(poses, disps, intrinsics, objectposes, objectmasks, num=args.edges)
+    # else:
     graph = OrderedDict()
     for i in range(N):
         graph[i] = [j for j in range(N) if i!=j and abs(i-j) <= 2]
@@ -211,8 +214,8 @@ def train(args):
     #     print(param)
 
     # fetch dataloader
-    db = dataset_factory(['car4'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
-    test_db = dataset_factory(['car4'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
 
     # train_sampler = torch.utils.data.distributed.DistributedSampler(
     #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
@@ -285,16 +288,16 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='car4-3dof-full', help='name your experiment')
+    parser.add_argument('--name', default='scene06', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/cofusion', help="path to dataset directory")
+    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=0)
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=10)
     parser.add_argument('--steps', type=int, default=160000)
-    parser.add_argument('--lr', type=float, default=0.00025)
+    parser.add_argument('--lr', type=float, default=0.000025)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=7)
 
@@ -302,10 +305,10 @@ if __name__ == '__main__':
     parser.add_argument('--w2', type=float, default=0.01)
     parser.add_argument('--w3', type=float, default=0.05)
 
-    parser.add_argument('--fmin', type=float, default=2.0)
-    parser.add_argument('--fmax', type=float, default=30.0)
+    parser.add_argument('--fmin', type=float, default=0.0)
+    parser.add_argument('--fmax', type=float, default=96.0)
     parser.add_argument('--obfmin', type=float, default=2.0)
-    parser.add_argument('--obfmax', type=float, default=30.0)
+    parser.add_argument('--obfmax', type=float, default=96.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')
     parser.add_argument('--edges', type=int, default=24)

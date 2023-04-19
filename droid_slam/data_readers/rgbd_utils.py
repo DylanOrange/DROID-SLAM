@@ -118,7 +118,7 @@ def compute_distance_matrix_flow(poses, disps, intrinsics):
     ii = ii.reshape(-1).cuda()
     jj = jj.reshape(-1).cuda()
 
-    MAX_FLOW = 100.0
+    MAX_FLOW = 256.0
     matrix = np.zeros((N, N), dtype=np.float32)
 
     s = 2048
@@ -149,7 +149,6 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
     invalidid = []
     for id, info in object.items():
         indexlist = info[0]
-
         objectmasks = torch.from_numpy(info[2])[:, 8//2::8, 8//2::8]
         disps = torch.from_numpy(alldisps[indexlist]).float()
 
@@ -164,7 +163,7 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
         max = objectdepths.amax((1,2))
 
         #如何评价遮挡
-        valid = (min > 0.2) * (max < 30.0) *(app > 30)
+        valid = (min > 0.2) * (max < 30.0) *(app > 70)
 
         #如果剩下的车不到五帧，就放弃这辆车
         if len(valid[valid>0])<5:

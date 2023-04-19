@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from collections import OrderedDict
 
-import lietorch
+from lietorch import SE3
 from data_readers.rgbd_utils import compute_distance_matrix_flow, compute_distance_matrix_flow2, compute_object_distance_matrix_flow
 
 
@@ -44,7 +44,6 @@ def build_frame_graph(poses, disps, intrinsics, num=16, thresh=24.0, r=2):
 
     count = 0
     graph = OrderedDict()
-    
     for i in range(N):
         graph[i] = []
         d[i,i] = np.inf
@@ -67,13 +66,12 @@ def build_frame_graph(poses, disps, intrinsics, num=16, thresh=24.0, r=2):
     
     return graph
 
-def build_object_frame_graph(poses, disps, intrinsics, num=16, thresh=24.0, r=2):
+def build_object_frame_graph(poses, disps, intrinsics,objectposes, objectmasks, num=16, thresh=24.0, r=2):
     """ construct a frame graph between co-visible frames """
     N = poses.shape[1]
-    poses = poses[0].cpu().numpy()
-    disps = disps[0][:,3::8,3::8].cpu().numpy()
-    intrinsics = intrinsics[0].cpu().numpy() / 8.0
-    d = compute_object_distance_matrix_flow(poses, disps, intrinsics)
+    poses = SE3(poses)
+    objectposes = SE3(objectposes).inv()
+    d = compute_object_distance_matrix_flow(poses, disps, intrinsics, objectposes, objectmasks)
 
     count = 0
     graph = OrderedDict()
