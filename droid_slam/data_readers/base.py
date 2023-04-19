@@ -41,8 +41,8 @@ class RGBDDataset(data.Dataset):
         self.obfmin = obfmin # exclude very easy examples
         self.obfmax = obfmax # exclude very hard examples
 
-        self.h1 = 360
-        self.w1 = 1200
+        self.h1 = 240
+        self.w1 = 808
         self.scale = 8
         self.cropscale = 2
 
