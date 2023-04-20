@@ -261,7 +261,7 @@ class DroidNet(nn.Module):
         print('ob_t_err is {}'.format(ob_t_err.item()))
         print('-----')
 	
-        for index in range(2):
+        for index in range(1):
             coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
 
@@ -344,25 +344,25 @@ class DroidNet(nn.Module):
                 #             1/(disp_list[-1][0,i].detach().cpu().numpy()), False)
                 break
 
-            objectmasks = pops.crop(highmasks, corners[0], recs[0])
+            # objectmasks = pops.crop(highmasks, corners[0], recs[0])
 
-            # upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
-            # upsampled_disps = upsample4(disps.unsqueeze(-1), True).squeeze(-1)
-            disps = pops.crop(highgtdisps, corners[0], recs[0])
-            # gtdisps = pops.crop(highgtdisps, corners[0], recs[0])
-            # disps = pops.crop(midasdisps, corners[0], recs[0])
-            # disps = gtdisps
-            # depth_valid = pops.crop(high_depth_valid, corners[0], recs[0])[:, ii, ..., None]
+            # # upsampled_disps = upsample_flow(disps.unsqueeze(-1), mask_disp, 4, True).squeeze(-1)
+            # # upsampled_disps = upsample4(disps.unsqueeze(-1), True).squeeze(-1)
+            # disps = pops.crop(highgtdisps, corners[0], recs[0])
+            # # gtdisps = pops.crop(highgtdisps, corners[0], recs[0])
+            # # disps = pops.crop(midasdisps, corners[0], recs[0])
+            # # disps = gtdisps
+            # # depth_valid = pops.crop(high_depth_valid, corners[0], recs[0])[:, ii, ..., None]
 
-            # upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
-            # upsampled_flow = upsample4(coords1 - coords0, False)
-            coords0 = pops.coords_grid(recs[0][0], recs[0][1], device=coords1.device)
-            # coords1 = pops.crop(upsampled_flow, corners[0], recs[0]) + coords0
+            # # upsampled_flow = upsample_flow(coords1 - coords0, mask_flow, 4, False)
+            # # upsampled_flow = upsample4(coords1 - coords0, False)
+            # coords0 = pops.coords_grid(recs[0][0], recs[0][1], device=coords1.device)
+            # # coords1 = pops.crop(upsampled_flow, corners[0], recs[0]) + coords0
 
-            intrinsics[...,:] *= 4
-            intrinsics[..., 2] -= corners[0][1]
-            intrinsics[..., 3] -= corners[0][0]
-            gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+            # intrinsics[...,:] *= 4
+            # intrinsics[..., 2] -= corners[0][1]
+            # intrinsics[..., 3] -= corners[0][0]
+            # gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
             # print('----------')
             # # gtflow = pops.crop(highgtflow, corners[0], recs[0]) + coords0

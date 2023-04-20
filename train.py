@@ -116,8 +116,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
                 static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
 
-                error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, \
-                error_highflow, error_dyhigh, error_induced_high, error_highdepth, error_highdynadepth, flow_metrics, \
+                error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, flow_metrics, \
                 = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
                                  objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
                
@@ -130,22 +129,18 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
             Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
             static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
 
-            error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, \
-            error_highflow, error_dyhigh, error_induced_high, error_highdepth, error_highdynadepth, flow_metrics, \
+            error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, flow_metrics, \
             = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
                                 objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
 
-            loss = 0.5*(args.w1 * geo_loss[0] + args.w1 * Obgeo_loss[0] + \
+            loss = args.w1 * geo_loss[0] + args.w1 * Obgeo_loss[0] + \
                 args.w2 * static_resi_loss[0] +\
-                args.w3 * error_induced_low) +\
-                args.w1 * geo_loss[1] + args.w1 * Obgeo_loss[1] + \
-                args.w2 * static_resi_loss[1] +\
-                args.w3 * error_induced_high
+                args.w3 * error_induced_low
             
             loss.backward()
 
-        Gs = poses_est[1][-1].detach()
-        ObjectGs = objectposes_est[1][-1].detach()
+        Gs = poses_est[0][-1].detach()
+        ObjectGs = objectposes_est[0][-1].detach()
         disps = disps_est[0][-1].detach()
 
         if skip:
@@ -163,8 +158,8 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
     loss = {
         'geo_loss':geo_loss[0].item(),
         'Obgeo_loss':Obgeo_loss[0].item(),
-        'high_geo_loss':geo_loss[1].item(),
-        'high_Obgeo_loss':Obgeo_loss[1].item(),
+        # 'high_geo_loss':geo_loss[1].item(),
+        # 'high_Obgeo_loss':Obgeo_loss[1].item(),
 
         'error_lowflow':error_lowflow.item(),
         'error_lowdepth':error_lowdepth.item(),
@@ -172,11 +167,11 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
         'error_dylow':error_dylow.item(),
         'error_lowdynadepth': error_lowdynadepth.item(),
 
-        'error_highflow':error_highflow.item(), 
-        'error_highdepth':error_highdepth.item(), 
-        'error_induced_high':error_induced_high.item(), 
-        'error_dyhigh':error_dyhigh.item(), 
-        'error_highdynadepth': error_highdynadepth.item()
+        # 'error_highflow':error_highflow.item(), 
+        # 'error_highdepth':error_highdepth.item(), 
+        # 'error_induced_high':error_induced_high.item(), 
+        # 'error_dyhigh':error_dyhigh.item(), 
+        # 'error_highdynadepth': error_highdynadepth.item()
     }
     metrics.update(loss)
 
@@ -288,7 +283,7 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='scene06_noweight', help='name your experiment')
+    parser.add_argument('--name', default='scene06-noweight', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")

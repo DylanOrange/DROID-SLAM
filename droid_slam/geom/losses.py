@@ -170,26 +170,22 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
 
     validmask = torch.ones_like(ii, dtype=torch.bool, device='cuda')[None]
 
-    corner = trackinfo['corner'][0][0]
-    rec = trackinfo['rec'][0][0]
+    # corner = trackinfo['corner'][0][0]
+    # rec = trackinfo['rec'][0][0]
 
-    highintrinsics = intrinsics.clone()
-    highintrinsics[...,:] *= 4
-    highintrinsics[..., 2] -= corner[1]
-    highintrinsics[..., 3] -= corner[0]
+    # highintrinsics = intrinsics.clone()
+    # highintrinsics[...,:] *= 4
+    # highintrinsics[..., 2] -= corner[1]
+    # highintrinsics[..., 3] -= corner[0]
 
-    highobjectmask = crop(highobjectmask, corner, rec)
-    highdisps = crop(highdisps, corner, rec)
+    # highobjectmask = crop(highobjectmask, corner, rec)
+    # highdisps = crop(highdisps, corner, rec)
 
     lowgtflow, lowmask = dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
-    highgtflow, highmask = dyprojective_transform(Ps, highdisps, highintrinsics, ii, jj, validmask, ObjectPs, highobjectmask)
+    # highgtflow, highmask = dyprojective_transform(Ps, highdisps, highintrinsics, ii, jj, validmask, ObjectPs, highobjectmask)
 
     lowmask = lowmask * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
-    highmask = highmask * (highdisps[:,ii] > 0).float().unsqueeze(dim=-1)
-
-    # highcoords0 = coords_grid(highdisps.shape[2], highdisps.shape[3], device=highdisps.device)
-    # highgtflow = crop(highgtflow - highcoords0, corner, rec) + coords_grid(rec[0], rec[1], device=highgtflow.device)
-    # highmask = crop(highmask, corner, rec)
+    # highmask = highmask * (highdisps[:,ii] > 0).float().unsqueeze(dim=-1)
 
     n = len(poses_est[0])
 
@@ -237,45 +233,42 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
         i_error_lowdynadepth = torch.mean((diff_disp)[objectmasks>0])
         error_lowdynadepth += w*i_error_lowdynadepth
 
-        #high resolution flow
-        i_error_high = highmask*(highgtflow - flow_list[1][i]).abs()
-        error_highflow += w*(i_error_high.mean())
+        # #high resolution flow
+        # i_error_high = highmask*(highgtflow - flow_list[1][i]).abs()
+        # error_highflow += w*(i_error_high.mean())
 
-        #high resolution dyna flow
-        i_error_dyhigh = i_error_high[highobjectmask[:,ii]>0.5]
-        error_dyhigh += w * i_error_dyhigh.mean()
+        # #high resolution dyna flow
+        # i_error_dyhigh = i_error_high[highobjectmask[:,ii]>0.5]
+        # error_dyhigh += w * i_error_dyhigh.mean()
 
-        #high resolution pose and depth
-        flow_high_induced, highmask_induced = dyprojective_transform(poses_est[1][i], disps_est[1][i], \
-                                                                    highintrinsics, ii, jj, validmask, objectposes_est[1][i], highobjectmask)
+        # #high resolution pose and depth
+        # flow_high_induced, highmask_induced = dyprojective_transform(poses_est[1][i], disps_est[1][i], \
+        #                                                             highintrinsics, ii, jj, validmask, objectposes_est[1][i], highobjectmask)
 
-        high_v = (highmask_induced * highmask).squeeze(dim=-1)
-        i_error_induced_high = high_v * (highgtflow - flow_high_induced).norm(dim=-1)
-        error_induced_high += w * i_error_induced_high.mean()
+        # high_v = (highmask_induced * highmask).squeeze(dim=-1)
+        # i_error_induced_high = high_v * (highgtflow - flow_high_induced).norm(dim=-1)
+        # error_induced_high += w * i_error_induced_high.mean()
 
-        #high resolution absolute depth
-        diff_disp = torch.abs(s_disps - disps_est[1][i]*scale)
-        i_error_highdepth = torch.mean((diff_disp)[s_disps>0])
-        error_highdepth += w*i_error_highdepth
+        # #high resolution absolute depth
+        # diff_disp = torch.abs(s_disps - disps_est[1][i]*scale)
+        # i_error_highdepth = torch.mean((diff_disp)[s_disps>0])
+        # error_highdepth += w*i_error_highdepth
 
-        # #high resolution dyna depth
-        i_error_highdynadepth = torch.mean((diff_disp)[highobjectmask>0])
-        error_highdynadepth += w*i_error_highdynadepth
+        # # #high resolution dyna depth
+        # i_error_highdynadepth = torch.mean((diff_disp)[highobjectmask>0])
+        # error_highdynadepth += w*i_error_highdynadepth
     
-    #depth evaluation for the last optimization
-    # print('low disps mean is {}'.format(disps_est[0][-1].mean()))
-    # print('high disps mean is {}'.format(disps_est[1][-1].mean()))
-    s_disps_est = disps_est[1][-1]* scale
+    # s_disps_est = disps_est[1][-1]* scale
     s_low_dispest = disps_est[0][-1] * scale
 
-    valid_high = (1.0/s_disps < 30.0)*(1.0/s_disps > 0.2)
-    high_gt = (s_disps)[valid_high]
-    high_pred = (s_disps_est)[valid_high]
+    # valid_high = (1.0/s_disps < 30.0)*(1.0/s_disps > 0.2)
+    # high_gt = (s_disps)[valid_high]
+    # high_pred = (s_disps_est)[valid_high]
 
-    high_diff = high_gt - high_pred
-    abs_high_diff = torch.abs(high_diff)
-    abs_high_error = torch.mean(abs_high_diff)
-    abs_high_dyna_error = torch.mean(torch.abs(s_disps - s_disps_est)[highobjectmask>0])
+    # high_diff = high_gt - high_pred
+    # abs_high_diff = torch.abs(high_diff)
+    # abs_high_error = torch.mean(abs_high_diff)
+    # abs_high_dyna_error = torch.mean(torch.abs(s_disps - s_disps_est)[highobjectmask>0])
 
     
     valid_low = (1.0/s_lowdisps < 30.0)*(1.0/s_lowdisps > 0.2)
@@ -288,10 +281,10 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
     abs_low_dyna_error = torch.mean(torch.abs(s_lowdisps - s_low_dispest)[objectmasks>0])
 
     epe_low = i_error_low[lowmask[..., 0] > 0.5]
-    epe_high = i_error_high[highmask[..., 0] > 0.5]
+    # epe_high = i_error_high[highmask[..., 0] > 0.5]
 
     epe_induced_low = i_error_induced_low.reshape(-1)[low_v.reshape(-1)>0.5]
-    epe_induced_high = i_error_induced_high.reshape(-1)[high_v.reshape(-1)>0.5]
+    # epe_induced_high = i_error_induced_high.reshape(-1)[high_v.reshape(-1)>0.5]
     
     metrics = {
         'low_f_error': epe_low.mean().item(),
@@ -303,25 +296,24 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
         'low_f_induced_error': epe_induced_low.mean().item(),
         'low_induced_1px': (epe_induced_low<1.0).float().mean().item(),
 
-        'high_f_induced_error': epe_induced_high.mean().item(),
-        'high_induced_1px': (epe_induced_high<1.0).float().mean().item(),
+        # 'high_f_induced_error': epe_induced_high.mean().item(),
+        # 'high_induced_1px': (epe_induced_high<1.0).float().mean().item(),
 
-        'high_f_error': epe_high.mean().item(),
-        'high_1px': (epe_high<1.0).float().mean().item(),
+        # 'high_f_error': epe_high.mean().item(),
+        # 'high_1px': (epe_high<1.0).float().mean().item(),
 
-        'high_dyna_f_error': i_error_dyhigh.mean().item(),
-        'high_dyna_1px': (i_error_dyhigh<1.0).float().mean().item(),
+        # 'high_dyna_f_error': i_error_dyhigh.mean().item(),
+        # 'high_dyna_1px': (i_error_dyhigh<1.0).float().mean().item(),
 
-        'abs_high_error':abs_high_error.item(),
+        # 'abs_high_error':abs_high_error.item(),
         'abs_low_error':abs_low_error.item(),
 
         'abs_low_dyna_error': abs_low_dyna_error.item(),
-        'abs_high_dyna_error': abs_high_dyna_error.item(),
+        # 'abs_high_dyna_error': abs_high_dyna_error.item(),
 
-        'abs_depth_high_error': i_error_highdepth.item(),
+        # 'abs_depth_high_error': i_error_highdepth.item(),
         'abs_depth_low_error':i_error_lowdepth.item(),
 
     }
     return error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, \
-            error_highflow, error_dyhigh, error_induced_high, error_highdepth, error_highdynadepth, \
             metrics

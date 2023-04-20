@@ -9,5 +9,5 @@
 #SBATCH --no-requeue
 #SBATCH --output=/storage/slurm/lud/logs/training/training-%j.out
 #SBATCH --error=/storage/slurm/lud/logs/training/training-%j.out
-git checkout Vkitti
+git checkout weight
 srun python train.py
