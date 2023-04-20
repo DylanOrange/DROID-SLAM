@@ -209,8 +209,8 @@ def train(args):
     #     print(param)
 
     # fetch dataloader
-    db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
-    test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    db = dataset_factory(['binbin'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    test_db = dataset_factory(['binbin'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
 
     # train_sampler = torch.utils.data.distributed.DistributedSampler(
     #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
@@ -283,14 +283,14 @@ def train(args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='scene06-noweight', help='name your experiment')
+    parser.add_argument('--name', default='test', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
+    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/binbin/simo', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=0)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=10)
+    parser.add_argument('--iters', type=int, default=1)
     parser.add_argument('--steps', type=int, default=160000)
     parser.add_argument('--lr', type=float, default=0.000025)
     parser.add_argument('--clip', type=float, default=2.5)

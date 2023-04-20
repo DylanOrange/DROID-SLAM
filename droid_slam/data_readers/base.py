@@ -236,15 +236,15 @@ class RGBDDataset(data.Dataset):
         intrinsics = np.array(intrinsics) / f
         
         disps = np.stack(list(map(read_disp, depths)), 0)
-        #visualzie depth
-        # for i in range(disps.shape[0]):
-        #     write_depth(os.path.join('../DeFlowSLAM/datasets/vkitti/room4-full/depth_visualize', str(i)), disps[i], False)
+        # visualzie depth
+        for i in range(disps.shape[0]):
+            write_depth(os.path.join('../DeFlowSLAM/datasets/binbin/depth_visualize', str(i)), disps[i], False)
         d = f * compute_distance_matrix_flow(poses, disps, intrinsics)
 
         # uncomment for nice visualization
-        # import matplotlib.pyplot as plt
-        # plt.imshow(d)
-        # plt.savefig('./result/matrix/camera.png', bbox_inches='tight')
+        import matplotlib.pyplot as plt
+        plt.imshow(d)
+        plt.savefig('./result/matrix/camera.png', bbox_inches='tight')
 
         graph = {}
         for i in range(d.shape[0]):
@@ -267,10 +267,10 @@ class RGBDDataset(data.Dataset):
         d, object = prepare_object_distance_matrix_flow(poses, disps, intrinsics, object)
 
         # uncomment for nice visualization
-        # import matplotlib.pyplot as plt
-        # for i in range(len(d)):
-        #     plt.imshow(d[i])
-        #     plt.savefig('./result/matrix/trackid_{}.png'.format(i), bbox_inches='tight')
+        import matplotlib.pyplot as plt
+        for i in range(len(d)):
+            plt.imshow(d[i])
+            plt.savefig('./result/matrix/trackid_{}.png'.format(i), bbox_inches='tight')
 
         for n, key in enumerate(object.keys()):
             graph = {}
