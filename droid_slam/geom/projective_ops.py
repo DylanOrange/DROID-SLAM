@@ -274,14 +274,14 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
         Joi = Gjj[:, :, None, None, None].adjT(Jcj)
         Joj = -Joi
 
-        Jdof = torch.zeros(6,3, device = Joi.device)
-        Jdof[0,0] = Jdof[2,1] = Jdof[4,2] = 1
+        # Jdof = torch.zeros(6,3, device = Joi.device)
+        # Jdof[0,0] = Jdof[2,1] = Jdof[4,2] = 1
 
-        # Joi = Joi*validobjectmask[..., None, None]
-        # Joj = Joj*validobjectmask[..., None, None]
+        Joi = Joi*validobjectmask[..., None, None]
+        Joj = Joj*validobjectmask[..., None, None]
 
-        Joi = torch.matmul(Joi, Jdof)*validobjectmask[..., None, None]
-        Joj = torch.matmul(Joj, Jdof)*validobjectmask[..., None, None]
+        # Joi = torch.matmul(Joi, Jdof)*validobjectmask[..., None, None]
+        # Joj = torch.matmul(Joj, Jdof)*validobjectmask[..., None, None]
 
         if batch:
             Jci = Jcoi*validobjectmask[..., None, None]+ Jci*(1-validobjectmask[..., None, None])

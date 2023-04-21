@@ -8,6 +8,9 @@ import os
 import os.path as osp
 import pickle
 
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
 from PIL import Image
 from scipy.spatial.transform import Rotation as R
 from lietorch import SE3
@@ -66,9 +69,23 @@ class binbin(RGBDDataset):
                     glob.glob(osp.join(self.root, scene, split, 'depth/*.png')))
                 instancemasks = sorted(
                     glob.glob(osp.join(self.root, scene, split, 'instance/*.png')))
+                invalids = sorted(
+                    glob.glob(osp.join(self.root, scene, split, 'invalid/*.png')))
 
                 info_file = osp.join(self.root, scene, split, 'info.pkl')
-                poses, objectposes, intrinsics = binbin.info_read(info_file)
+                poses, objectposes, intrinsics = binbin.info_read(info_file)#c2w, o2w
+
+                poses = SE3(torch.from_numpy(poses)).inv().data.numpy()#w2c
+
+                # points = poses[:,:3].T
+                # objectpoints = objectposes[:,:3].T
+    
+                # fig = plt.figure()
+                # ax = fig.add_subplot(111, projection = '3d')
+                # ax.plot(points[0], points[1], points[2], marker = 'x')
+                # ax.plot(objectpoints[0], objectpoints[1], objectpoints[2], marker = '+')
+                # ax.scatter(*points.T[0], color = 'red')
+                # plt.show()
 
                 masks = []
                 for mask_file in instancemasks:
@@ -84,7 +101,7 @@ class binbin(RGBDDataset):
 
                 objectinfo = self.build_object_frame_graph(poses, depths, intrinsics, object)
 
-                scene_info[scene+'-'+split] = {'images': images, 'depths': depths,'objectmasks': instancemasks, 
+                scene_info[scene+'-'+split] = {'images': images, 'depths': depths,'objectmasks': instancemasks, 'invalids':invalids,
                                         'poses': poses, 'intrinsics': intrinsics, 'graph': graph, 'object': objectinfo}
 
         return scene_info
@@ -169,7 +186,9 @@ class binbin(RGBDDataset):
     @staticmethod
     def depth_read(depth_file):
         depth = cv2.imread(depth_file, cv2.IMREAD_ANYCOLOR |
-                           cv2.IMREAD_ANYDEPTH) / (binbin.DEPTH_SCALE*100)
+                           cv2.IMREAD_ANYDEPTH) / (binbin.DEPTH_SCALE*1000)
+        depth[depth<1e-1] = 1.0
+        depth[depth>1e2] = 1.0
         depth[depth == np.nan] = 1.0
         depth[depth == np.inf] = 1.0
         depth[depth == 0] = 1.0

@@ -29,33 +29,33 @@ class CholeskySolver(torch.autograd.Function):
 
         return dH, dz
 
-# def block_solve(H, b, ep=0.0001, lm=0.0001):
-#     """ solve normal equations """
-#     B, N, _, D, _ = H.shape
-#     H = H.permute(0,1,3,2,4).reshape(B, N*D, N*D)
-
-#     I = torch.eye(N*D).to(H.device)
-#     H = H + (ep + lm*H) * I
-
-#     b = b.reshape(B, N*D, 1)
-
-#     # x = CholeskySolver.apply(H,b)
-#     x = torch.linalg.solve(H, b)
-#     return x.reshape(B, N, D)
-
 def block_solve(H, b, ep=0.0001, lm=0.0001):
     """ solve normal equations """
-    _, K, _ = H.shape
-    # H = H.permute(0,1,3,2,4).reshape(B, N*D, N*D)
+    B, N, _, D, _ = H.shape
+    H = H.permute(0,1,3,2,4).reshape(B, N*D, N*D)
 
-    I = torch.eye(K).to(H.device)
+    I = torch.eye(N*D).to(H.device)
     H = H + (ep + lm*H) * I
 
-    # b = b.reshape(B, N*D, 1)
+    b = b.reshape(B, N*D, 1)
 
     # x = CholeskySolver.apply(H,b)
     x = torch.linalg.solve(H, b)
-    return x
+    return x.reshape(B, N, D)
+
+# def block_solve(H, b, ep=0.0001, lm=0.0001):
+#     """ solve normal equations """
+#     _, K, _ = H.shape
+#     # H = H.permute(0,1,3,2,4).reshape(B, N*D, N*D)
+
+#     I = torch.eye(K).to(H.device)
+#     H = H + (ep + lm*H) * I
+
+#     # b = b.reshape(B, N*D, 1)
+
+#     # x = CholeskySolver.apply(H,b)
+#     x = torch.linalg.solve(H, b)
+#     return x
 
 
 # def schur_solve(H, E, C, v, w, ep=0.0001, lm=0.0001, sless=False):

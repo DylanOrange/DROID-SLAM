@@ -41,8 +41,8 @@ class RGBDDataset(data.Dataset):
         self.obfmin = obfmin # exclude very easy examples
         self.obfmax = obfmax # exclude very hard examples
 
-        self.h1 = 240
-        self.w1 = 808
+        self.h1 = 320
+        self.w1 = 480
         self.scale = 8
         self.cropscale = 2
 
@@ -237,14 +237,14 @@ class RGBDDataset(data.Dataset):
         
         disps = np.stack(list(map(read_disp, depths)), 0)
         # visualzie depth
-        for i in range(disps.shape[0]):
-            write_depth(os.path.join('../DeFlowSLAM/datasets/binbin/depth_visualize', str(i)), disps[i], False)
+        # for i in range(disps.shape[0]):
+        #     write_depth(os.path.join('../DeFlowSLAM/datasets/binbin/depth_visualize', str(i)), disps[i], False)
         d = f * compute_distance_matrix_flow(poses, disps, intrinsics)
 
         # uncomment for nice visualization
-        import matplotlib.pyplot as plt
-        plt.imshow(d)
-        plt.savefig('./result/matrix/camera.png', bbox_inches='tight')
+        # import matplotlib.pyplot as plt
+        # plt.imshow(d)
+        # plt.savefig('./result/matrix/camera.png', bbox_inches='tight')
 
         graph = {}
         for i in range(d.shape[0]):
@@ -267,10 +267,10 @@ class RGBDDataset(data.Dataset):
         d, object = prepare_object_distance_matrix_flow(poses, disps, intrinsics, object)
 
         # uncomment for nice visualization
-        import matplotlib.pyplot as plt
-        for i in range(len(d)):
-            plt.imshow(d[i])
-            plt.savefig('./result/matrix/trackid_{}.png'.format(i), bbox_inches='tight')
+        # import matplotlib.pyplot as plt
+        # for i in range(len(d)):
+        #     plt.imshow(d[i])
+        #     plt.savefig('./result/matrix/trackid_{}.png'.format(i), bbox_inches='tight')
 
         for n, key in enumerate(object.keys()):
             graph = {}
@@ -296,7 +296,7 @@ class RGBDDataset(data.Dataset):
         depths_list = self.scene_info[scene_id]['depths']
         poses_list = self.scene_info[scene_id]['poses']
         intrinsics_list = self.scene_info[scene_id]['intrinsics']
-        # insmasks_list = self.scene_info[scene_id]['objectmasks']
+        invalids_list = self.scene_info[scene_id]['invalids']
         # midasdepth_list = self.scene_info[scene_id]['midasdepth']
 
         frameidx_list = objectinfo[trackid][0]
@@ -306,8 +306,8 @@ class RGBDDataset(data.Dataset):
         inds = [ ix ]
         allindex = np.arange(len(frameidx_list))
         while len(inds) < self.n_frames:
-            neighbor = np.logical_and(np.abs(allindex-ix)>0, np.abs(allindex-ix)<3)
-            ix = np.random.choice(allindex[neighbor])
+            # neighbor = np.logical_and(np.abs(allindex-ix)>0, np.abs(allindex-ix)<3)
+            ix = np.random.choice(allindex[np.abs(allindex-ix)==1])
             inds += [ ix ]
             inds = list(set(inds))
 
@@ -350,7 +350,7 @@ class RGBDDataset(data.Dataset):
         #     print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_frame]))
 
         #读取mask并确定要追踪的车的id
-        images, depths, poses, intrinsics, objectmasks, objectposes, insmasks, highdepths, midasdepths = [], [], [], [], [], [], [], [], []
+        images, depths, poses, intrinsics, objectmasks, objectposes, insmasks, highdepths, invalids = [], [], [], [], [], [], [], [], []
         for i in inds:
             images.append(self.__class__.image_read(images_list[frameidx_list[i]]))
             depths.append(self.__class__.depth_read(depths_list[frameidx_list[i]]))#1/8 resolution, 1/2 resolution
@@ -361,7 +361,7 @@ class RGBDDataset(data.Dataset):
             # midasdepths.append(self.read_pfm(midasdepth_list[frameidx_list[i]])[0])
             objectmasks.append(objectmasks_list[i])
             objectposes.append(objectposes_list[i])
-            # insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]]))#1 resolution
+            invalids.append(self.__class__.objectmask_read(invalids_list[frameidx_list[i]]))#1 resolution
 
         images = np.stack(images).astype(np.float32)
         depths = np.stack(depths).astype(np.float32)
@@ -370,14 +370,14 @@ class RGBDDataset(data.Dataset):
 
         objectmasks = np.stack(objectmasks).astype(np.float32)
         objectposes = np.stack(objectposes).astype(np.float32)
-        # highdepths = np.stack(highdepths).astype(np.float32)
+        invalids = np.stack(invalids).astype(np.float32)
         # midasdepths = np.stack(midasdepths).astype(np.float32)
 
         # insmasks = np.stack(insmasks).astype(np.float32)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].copy()
-        #     vis_image[np.isin(insmasks[n], trackid)] = np.array([255.0,255.0,255.0])
+        #     vis_image[objectmasks[n]>0] = np.array([255.0,255.0,255.0])
         #     cv2.imwrite('./result/object/mask_'+ str(n)+'.png', vis_image)
 
         images = torch.from_numpy(images)
