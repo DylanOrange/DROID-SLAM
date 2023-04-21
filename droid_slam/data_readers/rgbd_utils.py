@@ -149,7 +149,7 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
     invalidid = []
     for id, info in object.items():
         indexlist = info[0]
-        objectmasks = torch.from_numpy(info[2])[:, 8//2::8, 8//2::8]
+        objectmasks = torch.from_numpy(info[2])
         disps = torch.from_numpy(alldisps[indexlist]).float()
 
         depths =  1.0/disps
@@ -159,11 +159,12 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
         # mean = objectdepths.sum((1,2))/objectmasks.sum((1,2))
 
         app = torch.count_nonzero(objectmasks, dim = (1,2))
+        print(app)
         min = 1.0/(objectdisps.amax((1,2)))
         max = objectdepths.amax((1,2))
 
         #如何评价遮挡
-        valid = (min > 0.2) * (max < 30.0) *(app > 70)
+        valid = (min > 0.2) * (max < 30.0) *(app > 50)
 
         #如果剩下的车不到五帧，就放弃这辆车
         if len(valid[valid>0])<5:
@@ -180,7 +181,7 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
         poses = torch.from_numpy(allposes[indexlist][valid]).float().cuda()[None]
         poses = SE3(poses)
 
-        object[id] = [info[0][valid], info[1][valid], info[2][valid]]
+        object[id] = [info[0][valid], info[1][valid]]
         
         N = poses.shape[1]
         
@@ -188,7 +189,7 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
         ii = ii.reshape(-1).cuda()
         jj = jj.reshape(-1).cuda()
 
-        MAX_FLOW = 100.0
+        MAX_FLOW = 256.0
         matrix = np.zeros((N, N), dtype=np.float32)
 
         s = 2048
@@ -199,11 +200,6 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
 
             flow1st, _ = pops.induced_flow(poses, disps, intrinsics, ii[i:i+s], jj[i:i+s])
             flow2st, _ = pops.induced_flow(poses, disps, intrinsics, jj[i:i+s], ii[i:i+s])
-
-            # ii_test = ii[i:i+s]
-            # staticmask = 1 - objectmasks[:, ii_test]
-            # sta1 = flow1*staticmask[..., None]
-            # sta2 = flow1st*staticmask[..., None]
            
             flow = torch.stack([flow1-flow1st, flow2-flow2st], dim=2)
             val = torch.stack([val1, val2], dim=2)

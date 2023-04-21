@@ -59,7 +59,7 @@ def load_weights(model, weights):
     model.load_state_dict(state_dict, strict = False)
     return model
 
-def step(model, item, mode, logger, skip, save, total_steps, args):
+def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
 
     images, poses, objectposes, objectmasks, disps, \
 		highdisps, highmask, intrinsics, scale, depth_valid, high_depth_valid = [x.to('cuda') for x in item[0]]
@@ -144,7 +144,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
         disps = disps_est[0][-1].detach()
 
         if skip:
-            if flow_metrics['abs_high_dyna_error'] > 1.2*flow_metrics['abs_high_error'] and Obgeo_metrics[1]['high_ob_rot_error'] > 0.5:
+            if flow_metrics['low_dyna_f_error'] > 1.2*flow_metrics['low_f_error'] and Obgeo_metrics[0]['ob_rot_error'] > 0.5:
                 print('bad optimization!')
                 return True
     metrics = {}
@@ -175,32 +175,32 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
     }
     metrics.update(loss)
 
-    # if gpu ==0:
-    if mode == 'val':
-        val_metrics = {}
-        for key in metrics:
-            newkey = 'val_'+key
-            val_metrics[newkey] = metrics[key]
-        logger.push(val_metrics)
-        metrics.clear()
-    
-    else:
-        logger.push(metrics)
+    if gpu ==0:
+        if mode == 'val':
+            val_metrics = {}
+            for key in metrics:
+                newkey = 'val_'+key
+                val_metrics[newkey] = metrics[key]
+            logger.push(val_metrics)
+            metrics.clear()
+        
+        else:
+            logger.push(metrics)
 
     return False
 
     
-def train(args):
+def train(gpu, args):
     """ Test to make sure project transform correctly maps points """
 
     # coordinate multiple GPUs
-    # setup_ddp(gpu, args)
+    setup_ddp(gpu, args)
 
     model = DroidNet()
     model.cuda()
     model.train()
 
-    # model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
+    model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
 
     if args.ckpt is not None:
         model = load_weights(model, args.ckpt)
@@ -212,17 +212,17 @@ def train(args):
     db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
     test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
 
-    # train_sampler = torch.utils.data.distributed.DistributedSampler(
-    #     db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        db, shuffle=True, num_replicas=args.world_size, rank=gpu)
     
-    # test_sampler = torch.utils.data.distributed.DistributedSampler(
-    #     test_db, shuffle=True, num_replicas=args.world_size, rank=gpu)
+    test_sampler = torch.utils.data.distributed.DistributedSampler(
+        test_db, shuffle=True, num_replicas=args.world_size, rank=gpu)
     
-    train_loader = DataLoader(db, batch_size=args.batch, shuffle = True)
-    test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
+    # train_loader = DataLoader(db, batch_size=args.batch, shuffle = True)
+    # test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
     
-    # train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
-    # test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
+    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=1)
+    test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=1)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -240,7 +240,7 @@ def train(args):
 
             optimizer.zero_grad()
 
-            if step(model, item, 'train', logger, skip, save, total_steps, args):
+            if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
                 print('jump train!')
                 continue
             
@@ -257,10 +257,11 @@ def train(args):
 
                 for _, item in enumerate(test_loader):
 
-                    if step(model, item, 'val', logger, skip, False, total_steps, args):
+                    if step(model, item, 'val', logger, skip, False, total_steps, args, gpu):
                         print('jump val!')
                         continue
                     eval_steps += 1
+                    # total_steps += 1
 
                     if eval_steps == 60:
                         model.train()
@@ -269,7 +270,7 @@ def train(args):
             if total_steps>80000:
                 skip = True
 
-            if total_steps % 2000 == 0:
+            if total_steps % 2000 and gpu == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                 torch.save(model.state_dict(), PATH)
 
@@ -277,22 +278,22 @@ def train(args):
                 should_keep_training = False
                 break
 
-    # dist.destroy_process_group()
+    dist.destroy_process_group()
                 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='scene06-noweight', help='name your experiment')
+    parser.add_argument('--name', default='overfit-onecard', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=0)
+    parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=10)
+    parser.add_argument('--iters', type=int, default=12)
     parser.add_argument('--steps', type=int, default=160000)
-    parser.add_argument('--lr', type=float, default=0.000025)
+    parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=7)
 
@@ -302,7 +303,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--fmin', type=float, default=0.0)
     parser.add_argument('--fmax', type=float, default=96.0)
-    parser.add_argument('--obfmin', type=float, default=2.0)
+    parser.add_argument('--obfmin', type=float, default=16.0)
     parser.add_argument('--obfmax', type=float, default=96.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')
@@ -320,9 +321,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.world_size = args.gpus
-    train(args)
+    # train(args)
 
-    # os.environ['MASTER_ADDR'] = 'localhost'
-    # os.environ['MASTER_PORT'] = '12348'
-    # mp.spawn(train, nprocs=args.gpus, args=(args,))
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12348'
+    mp.spawn(train, nprocs=args.gpus, args=(args,))
 

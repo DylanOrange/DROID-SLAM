@@ -30,18 +30,18 @@ class VKitti2(RGBDDataset):
     # scale depths to balance rot & trans
     DEPTH_SCALE = 1.0
     split = {
-        'train': ('15-deg-left','15-deg-right','30-deg-left'),
+        'train': ('15-deg-left','15-deg-right','30-deg-left','30-deg-right', 'fog', 'morning', 'overcast', 'rain', 'sunset'),
         'val': ('clone',),
         'test': ('30-deg-right',)
     }
     scene = {
-        'train': ('Scene06',),
-        'val':('Scene18',),
+        'train': ('Scene06','Scene18','Scene20'),
+        'val':('Scene06','Scene18','Scene20'),
     }
     def __init__(self, split_mode='train', **kwargs):
         self.split_mode = split_mode
         # self.midasdepth = '../MiDaS/output'
-        super(VKitti2, self).__init__(name='VKitti2-Scene06', split_mode = self.split_mode, **kwargs)
+        super(VKitti2, self).__init__(name='VKitti2-all', split_mode = self.split_mode, **kwargs)
 
     @staticmethod
     def is_test_scene(scene):
@@ -54,7 +54,9 @@ class VKitti2(RGBDDataset):
 
         scene_info = {}
         for scene in VKitti2.scene[self.split_mode]:
-            for split in VKitti2.split['train']:
+            print('building '+scene)
+            for split in VKitti2.split[self.split_mode]:
+                print('building '+split)
                 images = sorted(
                     glob.glob(osp.join(self.root, scene, split, 'frames/rgb/Camera_0/*.jpg')))
                 depths = sorted(
@@ -76,7 +78,7 @@ class VKitti2(RGBDDataset):
 
                 # translation + Quaternion
                 with open(osp.join(self.root, scene, split, 'info.txt')) as f:
-                    objectid = [int(line.split()[0]) for line in f.readlines()[1:-1]]
+                    objectid = [int(line.split()[0]) for line in f.readlines()[1:]]
                 
                 object = self.object_read(objectposepath, objectid, instancemasks)#index, poses, objectmask at 1/8 resolution
 
@@ -121,6 +123,7 @@ class VKitti2(RGBDDataset):
     def object_read(self, datapath, trackid, maskpath):
         object = {}
         for id in trackid:
+            print('read id {}'.format(id))
             raw_mat = np.loadtxt(datapath, dtype = np.float32, delimiter=' ', skiprows=1)
             mask = (raw_mat[:,1] == 0) & (raw_mat[:,2] == id)
             mat = raw_mat[mask]
@@ -148,7 +151,7 @@ class VKitti2(RGBDDataset):
     @staticmethod
     def objectmask_read(mask_file):
         mask = Image.open(mask_file)
-        return np.array(mask), np.array(mask.resize((101,30), Image.NEAREST)) #1, 1/8
+        return np.array(mask)[8//2::8, 8//2::8], np.array(mask) #1, 1/8
 
     @staticmethod
     def depth_read(depth_file):

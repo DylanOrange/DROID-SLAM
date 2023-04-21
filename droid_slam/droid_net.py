@@ -324,6 +324,8 @@ class DroidNet(nn.Module):
             print('ob_r_err is {}'.format(ob_r_err.item()))
             print('ob_t_err is {}'.format(ob_t_err.item()))
             print('-----')
+            if ob_r_err.item()>0.1:
+                print('bad optimization!')
 
             # intrinsics_list.append(intrinsics)
             # all_weight_list.append(weight_list)

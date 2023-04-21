@@ -41,8 +41,8 @@ class RGBDDataset(data.Dataset):
         self.obfmin = obfmin # exclude very easy examples
         self.obfmax = obfmax # exclude very hard examples
 
-        self.h1 = 240
-        self.w1 = 808
+        self.h1 = 288
+        self.w1 = 960
         self.scale = 8
         self.cropscale = 2
 
@@ -73,24 +73,23 @@ class RGBDDataset(data.Dataset):
         self.dataset_index = []
         for scene in self.scene_info:
             objectinfo = self.scene_info[scene]['object']
-            # cameragraph = self.scene_info[scene]['graph']
+            cameragraph = self.scene_info[scene]['graph']
             for id in list(objectinfo.keys()):
                 if len(objectinfo[id][0])<self.n_frames:
                     continue
-                objectgraph = objectinfo[id][3]
-                for i in objectgraph:
-                    self.dataset_index.append((scene, id, i))
-                # objectgraph = objectinfo[id][3]
-                # frameidx_list = objectinfo[id][0]
+                objectgraph = objectinfo[id][2]
                 # for i in objectgraph:
-                #     k = (objectgraph[i][1] > self.obfmin) & (objectgraph[i][1] < self.obfmax)
-                #     if k.any():
-                #         camera_frame = frameidx_list[i]
-                #         camera_idx = np.isin(cameragraph[camera_frame][0], frameidx_list[objectgraph[i][0][k]])
-                #         factor_camera = cameragraph[camera_frame][1][camera_idx]
-                #         m = (factor_camera > self.fmin) & (factor_camera < self.fmax)
-                #         if m.any():
-                #             self.dataset_index.append((scene, id, i))
+                    # self.dataset_index.append((scene, id, i))
+                frameidx_list = objectinfo[id][0]
+                for i in objectgraph:
+                    k = (objectgraph[i][1] > self.obfmin) & (objectgraph[i][1] < self.obfmax)
+                    if k.any():
+                        camera_frame = frameidx_list[i]
+                        camera_idx = np.isin(cameragraph[camera_frame][0], frameidx_list[objectgraph[i][0][k]])
+                        factor_camera = cameragraph[camera_frame][1][camera_idx]
+                        m = (factor_camera > self.fmin) & (factor_camera < self.fmax)
+                        if m.any():
+                            self.dataset_index.append((scene, id, i))
 
     @staticmethod
     def image_read(image_file):
@@ -148,21 +147,10 @@ class RGBDDataset(data.Dataset):
 
     @staticmethod
     def cornerinfo(objectmask):
-        # rec = torch.tensor([0,0])
         coords = torch.nonzero(objectmask)
         corner_min = torch.amin(coords, dim = 0)[1:]
         corner_max = torch.amax(coords, dim = 0)[1:]
         rec = corner_max - corner_min
-        
-        # corners = []
-        # for id in TRACKID:
-        #     mask = torch.where(objectmask == (id+1), 1.0, 0.0)
-        #     coords = torch.nonzero(mask)
-        #     corner_min = torch.min(coords, dim = 0).values[1:]
-        #     corner_max = torch.max(coords, dim = 0).values[1:]
-        #     rec = torch.maximum(corner_max - corner_min, rec)
-        #     corners.append(corner_min)
-        # corners = torch.stack(corners, dim = 0)
         return corner_min, rec
     
     @staticmethod
@@ -238,7 +226,7 @@ class RGBDDataset(data.Dataset):
         disps = np.stack(list(map(read_disp, depths)), 0)
         #visualzie depth
         # for i in range(disps.shape[0]):
-        #     write_depth(os.path.join('../DeFlowSLAM/datasets/vkitti/room4-full/depth_visualize', str(i)), disps[i], False)
+        #     write_depth(os.path.join('../DeFlowSLAM/datasets/vkitti_depth_visualize', str(i)), disps[i], False)
         d = f * compute_distance_matrix_flow(poses, disps, intrinsics)
 
         # uncomment for nice visualization
@@ -253,7 +241,7 @@ class RGBDDataset(data.Dataset):
 
         return graph
 
-    def build_object_frame_graph(self, poses, depths, intrinsics, object, f=8, max_flow=100):
+    def build_object_frame_graph(self, poses, depths, intrinsics, object, f=8, max_flow=256):
         """ compute optical flow distance between all pairs of frames """
         def read_disp(fn):
             depth = self.__class__.depth_read(fn)[f//2::f, f//2::f]
@@ -284,32 +272,31 @@ class RGBDDataset(data.Dataset):
     def __getitem__(self, index):
         """ return training video """
 
-        index = index % len(self.dataset_index)
+        # index = index % len(self.dataset_index)
+        index = np.random.randint(30)
 
-        # index = 50
+        # scene_id = 'Scene18-rain'
+        # trackid = 1
+        # inds = [140, 141, 142, 143, 144, 145, 146]
+        # inds = np.array(inds)
+
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
-        objectgraph = objectinfo[trackid][3]
+        objectgraph = objectinfo[trackid][2]
 
         frame_graph = self.scene_info[scene_id]['graph']
         images_list = self.scene_info[scene_id]['images']
         depths_list = self.scene_info[scene_id]['depths']
         poses_list = self.scene_info[scene_id]['poses']
         intrinsics_list = self.scene_info[scene_id]['intrinsics']
-        # insmasks_list = self.scene_info[scene_id]['objectmasks']
+        insmasks_list = self.scene_info[scene_id]['objectmasks']
         # midasdepth_list = self.scene_info[scene_id]['midasdepth']
 
         frameidx_list = objectinfo[trackid][0]
         objectposes_list = objectinfo[trackid][1]
-        objectmasks_list = objectinfo[trackid][2]
-
+        
+        initial_ix = ix
         inds = [ ix ]
-        allindex = np.arange(len(frameidx_list))
-        while len(inds) < self.n_frames:
-            neighbor = np.logical_and(np.abs(allindex-ix)>0, np.abs(allindex-ix)<3)
-            ix = np.random.choice(allindex[neighbor])
-            inds += [ ix ]
-            inds = list(set(inds))
 
         # while len(inds) < self.n_frames:
         #     # get other frames within flow threshold
@@ -325,7 +312,7 @@ class RGBDDataset(data.Dataset):
         #     intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
         #     frames = np.isin(frameidx_list, intersect).nonzero()[0]
         #     # print(frames)
-        #     in20 = np.logical_and(np.abs(frames-ix)<20, 0<np.abs(frames-ix))
+        #     in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
 
         #     if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
         #         ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
@@ -337,47 +324,56 @@ class RGBDDataset(data.Dataset):
         #         ix = np.random.choice(frames)
         #         # print(ix)
         #     inds += [ ix ]
-        inds = np.array(inds)
+        # inds = np.array(inds)
 
-        # print('scene is {}'.format(scene_id))
-        # print('trackid is {}'.format(trackid))
-        # print('frames are {}'.format(inds))
-        # print('camera frames are {}'.format(frameidx_list[inds]))
-        # for i in range(len(inds)-1):
-        #     camera_frame = frameidx_list[inds[i]]
-        #     next_ca_frame = frameidx_list[inds[i+1]]
-        #     print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
-        #     print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_frame]))
+        # if len(np.unique(inds)) < 5:
+        #     ix = initial_ix
+        #     inds = [ix]
+        allindex = np.arange(len(frameidx_list))
+        while len(inds) < self.n_frames:
+            ix = np.random.choice(allindex[np.abs(allindex-ix)==1])
+            inds += [ ix ]
+            inds = list(set(inds))
+        inds = np.array(inds)
+            
+        print('scene is {}'.format(scene_id))
+        print('trackid is {}'.format(trackid))
+        print('frames are {}'.format(inds))
+        print('camera frames are {}'.format(frameidx_list[inds]))
+        for i in range(len(inds)-1):
+            camera_frame = frameidx_list[inds[i]]
+            next_ca_frame = frameidx_list[inds[i+1]]
+            print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
+            print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_frame]))
 
         #读取mask并确定要追踪的车的id
         images, depths, poses, intrinsics, objectmasks, objectposes, insmasks, highdepths, midasdepths = [], [], [], [], [], [], [], [], []
         for i in inds:
             images.append(self.__class__.image_read(images_list[frameidx_list[i]]))
             depths.append(self.__class__.depth_read(depths_list[frameidx_list[i]]))#1/8 resolution, 1/2 resolution
-            # depths.append(depth)
-            # highdepths.append(highdepth)
             poses.append(poses_list[frameidx_list[i]])
             intrinsics.append(intrinsics_list[frameidx_list[i]])
             # midasdepths.append(self.read_pfm(midasdepth_list[frameidx_list[i]])[0])
-            objectmasks.append(objectmasks_list[i])
+            # objectmasks.append(objectmasks_list[i])
             objectposes.append(objectposes_list[i])
-            # insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]]))#1 resolution
+            insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]])[1])#1 resolution
 
         images = np.stack(images).astype(np.float32)
         depths = np.stack(depths).astype(np.float32)
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
-        objectmasks = np.stack(objectmasks).astype(np.float32)
+        # objectmasks = np.stack(objectmasks).astype(np.float32)
         objectposes = np.stack(objectposes).astype(np.float32)
         # highdepths = np.stack(highdepths).astype(np.float32)
         # midasdepths = np.stack(midasdepths).astype(np.float32)
 
-        # insmasks = np.stack(insmasks).astype(np.float32)
+        insmasks = np.stack(insmasks).astype(np.float32)
+        objectmasks = np.where(insmasks == (trackid+1.0), 1.0, 0.0).astype(np.float32)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].copy()
-        #     vis_image[np.isin(insmasks[n], trackid)] = np.array([255.0,255.0,255.0])
+        #     vis_image[objectmasks[n]>0] = np.array([255.0,255.0,255.0])
         #     cv2.imwrite('./result/object/mask_'+ str(n)+'.png', vis_image)
 
         images = torch.from_numpy(images)
@@ -407,7 +403,6 @@ class RGBDDataset(data.Dataset):
         corners, recs = [], []
         highmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1//2, self.w1//2)).squeeze(1)
         lowmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
-        # highmask = torch.where(insmask == (trackid+1.0), 1.0, 0.0)
         mask = highmask.clone()
         for level in range(3):
             corner, rec = self.cornerinfo(highmask)
@@ -432,7 +427,7 @@ class RGBDDataset(data.Dataset):
         highdisps = 1.0/highdepths
 
         # for i in range(depths.shape[0]):
-        #     write_depth('./result/depth/'+str(frameidx_list[inds][i])+'.png', disps[i], False)
+        #     write_depth('./result/depth/'+str(i)+'.png', disps[i], False)
         #     write_depth('./result/depth/'+str(frameidx_list[inds][i])+'_high.png', highdisps[i], False)
 
         # m_s = highmidasdepths[highmidasdepths>0].mean()
