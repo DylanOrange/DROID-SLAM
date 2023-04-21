@@ -139,7 +139,7 @@ class UpdateModule(nn.Module):
             GradientClip())
 
         self.gru = ConvGRU(128, 128+128+64)
-        self.agg = GraphAgg()
+        # self.agg = GraphAgg()
 
         # self.mask_flow = nn.Sequential(
         #     nn.Conv2d(128, 256, 3, padding=1),
@@ -207,18 +207,18 @@ class DroidNet(nn.Module):
         std = torch.as_tensor([0.229, 0.224, 0.225], device=images.device)
         images = images.sub_(mean[:, None, None]).div_(std[:, None, None])
 
-        fmaps, fmaps_high = self.fnet(images, corners, recs)
-        net, net_high = self.cnet(images, corners, recs)
+        fmaps = self.fnet(images, corners, recs)
+        net = self.cnet(images, corners, recs)
         
         net, inp = net.split([128,128], dim=2)
         net = torch.tanh(net)
         inp = torch.relu(inp)
 
-        net_high, inp_high = net_high.split([128,128], dim=2)
-        net_high = torch.tanh(net_high)
-        inp_high = torch.relu(inp_high)
+        # net_high, inp_high = net_high.split([128,128], dim=2)
+        # net_high = torch.tanh(net_high)
+        # inp_high = torch.relu(inp_high)
 
-        return [fmaps, fmaps_high], [net, net_high], [inp, inp_high]
+        return [fmaps], [net], [inp]
 
 
     def forward(self, Gs, Ps, ObjectGs, ObjectPs, images, objectmasks, highmasks, \

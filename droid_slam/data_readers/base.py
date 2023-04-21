@@ -272,13 +272,7 @@ class RGBDDataset(data.Dataset):
     def __getitem__(self, index):
         """ return training video """
 
-        # index = index % len(self.dataset_index)
-        index = np.random.randint(30)
-
-        # scene_id = 'Scene18-rain'
-        # trackid = 1
-        # inds = [140, 141, 142, 143, 144, 145, 146]
-        # inds = np.array(inds)
+        index = index % len(self.dataset_index)
 
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
@@ -298,53 +292,53 @@ class RGBDDataset(data.Dataset):
         initial_ix = ix
         inds = [ ix ]
 
-        # while len(inds) < self.n_frames:
-        #     # get other frames within flow threshold
-        #     k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
-        #     object_frames = objectgraph[ix][0][k]
-        #     # print('object flow {}'.format(frameidx_list[object_frames]))
-
-        #     camera_idx = frameidx_list[ix]
-        #     m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
-        #     camera_frames = frame_graph[camera_idx][0][m]
-        #     # print('camera flow {}'.format(camera_frames))
-
-        #     intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
-        #     frames = np.isin(frameidx_list, intersect).nonzero()[0]
-        #     # print(frames)
-        #     in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
-
-        #     if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
-        #         ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
-        #         # print(ix)
-        #     elif np.count_nonzero(frames[in20]):
-        #         ix = np.random.choice(frames[in20])
-        #         # print(ix)
-        #     else:
-        #         ix = np.random.choice(frames)
-        #         # print(ix)
-        #     inds += [ ix ]
-        # inds = np.array(inds)
-
-        # if len(np.unique(inds)) < 5:
-        #     ix = initial_ix
-        #     inds = [ix]
-        allindex = np.arange(len(frameidx_list))
         while len(inds) < self.n_frames:
-            ix = np.random.choice(allindex[np.abs(allindex-ix)==1])
+            # get other frames within flow threshold
+            k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
+            object_frames = objectgraph[ix][0][k]
+            # print('object flow {}'.format(frameidx_list[object_frames]))
+
+            camera_idx = frameidx_list[ix]
+            m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
+            camera_frames = frame_graph[camera_idx][0][m]
+            # print('camera flow {}'.format(camera_frames))
+
+            intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
+            frames = np.isin(frameidx_list, intersect).nonzero()[0]
+            # print(frames)
+            in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
+
+            if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
+                ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
+                # print(ix)
+            elif np.count_nonzero(frames[in20]):
+                ix = np.random.choice(frames[in20])
+                # print(ix)
+            else:
+                ix = np.random.choice(frames)
+                # print(ix)
             inds += [ ix ]
-            inds = list(set(inds))
         inds = np.array(inds)
+
+        if len(np.unique(inds)) < 5:
+            ix = initial_ix
+            inds = [ix]
+            allindex = np.arange(len(frameidx_list))
+            while len(inds) < self.n_frames:
+                ix = np.random.choice(allindex[np.abs(allindex-ix)==1])
+                inds += [ ix ]
+                inds = list(set(inds))
+            inds = np.array(inds)
             
-        print('scene is {}'.format(scene_id))
-        print('trackid is {}'.format(trackid))
-        print('frames are {}'.format(inds))
-        print('camera frames are {}'.format(frameidx_list[inds]))
-        for i in range(len(inds)-1):
-            camera_frame = frameidx_list[inds[i]]
-            next_ca_frame = frameidx_list[inds[i+1]]
-            print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
-            print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_frame]))
+        # print('scene is {}'.format(scene_id))
+        # print('trackid is {}'.format(trackid))
+        # print('frames are {}'.format(inds))
+        # print('camera frames are {}'.format(frameidx_list[inds]))
+        # for i in range(len(inds)-1):
+        #     camera_frame = frameidx_list[inds[i]]
+        #     next_ca_frame = frameidx_list[inds[i+1]]
+        #     print('object flow is {}'.format(objectgraph[inds[i]][1][objectgraph[inds[i]][0] == inds[i+1]]))
+        #     print('camera flow is {}'.format(frame_graph[camera_frame][1][frame_graph[camera_frame][0] == next_ca_frame]))
 
         #读取mask并确定要追踪的车的id
         images, depths, poses, intrinsics, objectmasks, objectposes, insmasks, highdepths, midasdepths = [], [], [], [], [], [], [], [], []
@@ -354,7 +348,6 @@ class RGBDDataset(data.Dataset):
             poses.append(poses_list[frameidx_list[i]])
             intrinsics.append(intrinsics_list[frameidx_list[i]])
             # midasdepths.append(self.read_pfm(midasdepth_list[frameidx_list[i]])[0])
-            # objectmasks.append(objectmasks_list[i])
             objectposes.append(objectposes_list[i])
             insmasks.append(self.__class__.objectmask_read(insmasks_list[frameidx_list[i]])[1])#1 resolution
 
@@ -363,7 +356,6 @@ class RGBDDataset(data.Dataset):
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
-        # objectmasks = np.stack(objectmasks).astype(np.float32)
         objectposes = np.stack(objectposes).astype(np.float32)
         # highdepths = np.stack(highdepths).astype(np.float32)
         # midasdepths = np.stack(midasdepths).astype(np.float32)

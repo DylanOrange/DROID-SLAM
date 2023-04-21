@@ -42,11 +42,11 @@ def show_image(image):
     cv2.imshow('image', image / 255.0)
     cv2.waitKey()
 
-def load_weights(model, weights):
+def load_weights(model, weights, gpu):
     """ load trained model weights """
 
     state_dict = OrderedDict([
-        (k.replace("module.", ""), v) for (k, v) in torch.load(weights).items()])
+        (k.replace("module.", ""), v) for (k, v) in torch.load(weights, map_location='cuda:'+str(gpu)).items()])
     # state_dict = torch.load(weights)
     # for key in state_dict.keys():
     #     state_dict.update({key.split('.', 1)[1]:state_dict.pop(key)})
@@ -198,16 +198,13 @@ def train(gpu, args):
 
     model = DroidNet()
     model.cuda()
+
+    if args.ckpt is not None:
+        model = load_weights(model, args.ckpt, gpu)
     model.train()
 
     model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
-
-    if args.ckpt is not None:
-        model = load_weights(model, args.ckpt)
     
-    # for param in model.parameters():
-    #     print(param)
-
     # fetch dataloader
     db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
     test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
@@ -221,8 +218,8 @@ def train(gpu, args):
     # train_loader = DataLoader(db, batch_size=args.batch, shuffle = True)
     # test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
     
-    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=1)
-    test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=1)
+    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
+    test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -284,16 +281,16 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='overfit-onecard', help='name your experiment')
+    parser.add_argument('--name', default='vkitti-all', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=1)
+    parser.add_argument('--gpus', type=int, default=4)
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=12)
     parser.add_argument('--steps', type=int, default=160000)
-    parser.add_argument('--lr', type=float, default=0.00025)
+    parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=7)
 
@@ -324,6 +321,6 @@ if __name__ == '__main__':
     # train(args)
 
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12348'
+    os.environ['MASTER_PORT'] = '12346'
     mp.spawn(train, nprocs=args.gpus, args=(args,))
 
