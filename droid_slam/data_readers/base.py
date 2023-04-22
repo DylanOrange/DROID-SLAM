@@ -330,10 +330,10 @@ class RGBDDataset(data.Dataset):
                 inds = list(set(inds))
             inds = np.array(inds)
             
-        # print('scene is {}'.format(scene_id))
-        # print('trackid is {}'.format(trackid))
-        # print('frames are {}'.format(inds))
-        # print('camera frames are {}'.format(frameidx_list[inds]))
+        print('scene is {}'.format(scene_id))
+        print('trackid is {}'.format(trackid))
+        print('frames are {}'.format(inds))
+        print('camera frames are {}'.format(frameidx_list[inds]))
         # for i in range(len(inds)-1):
         #     camera_frame = frameidx_list[inds[i]]
         #     next_ca_frame = frameidx_list[inds[i+1]]
