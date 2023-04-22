@@ -135,7 +135,7 @@ def smooth_loss(Gs, gamma=0.9):
     return sum_smooth_loss, metrics
 
 
-def residual_loss(residuals, gamma=0.9):
+def residual_loss(residuals, dyna = False, gamma=0.9):
     """ loss on system residuals """
 
     residual_loss_list, metrics_list = [], []
@@ -149,8 +149,10 @@ def residual_loss(residuals, gamma=0.9):
         for i in range(n):
             w = gamma ** (n - i - 1)
             residual_loss += w * residual[i].abs().mean()
-
-        metrics = {'residual': residual_loss.item()}
+        if dyna:
+            metrics = {'dyna residual': residual_loss.item()}
+        else:
+            metrics = {'residual': residual_loss.item()}
 
         if index == 1:
             for key_old, value in list(metrics.items()):
@@ -163,7 +165,7 @@ def residual_loss(residuals, gamma=0.9):
 
 
 def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
-              objectmasks, highobjectmask, trackinfo, intrinsics, graph, flow_list, scale, gamma=0.9):
+              objectmasks, highobjectmask, trackinfo, intrinsics, graph, flow_list, dyflow_list, scale, gamma=0.9):
     """ optical flow loss """
 
     ii, jj, kk = graph_to_edge_list(graph)
@@ -181,11 +183,12 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
     # highobjectmask = crop(highobjectmask, corner, rec)
     # highdisps = crop(highdisps, corner, rec)
 
+    stflow, stmask = projective_transform(Ps, disps, intrinsics, ii, jj)
     lowgtflow, lowmask = dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
     # highgtflow, highmask = dyprojective_transform(Ps, highdisps, highintrinsics, ii, jj, validmask, ObjectPs, highobjectmask)
 
     lowmask = lowmask * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
-    # highmask = highmask * (highdisps[:,ii] > 0).float().unsqueeze(dim=-1)
+    stmask = stmask * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
 
     n = len(poses_est[0])
 
@@ -194,6 +197,9 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
     error_induced_low = 0
     error_lowdepth = 0
     error_lowdynadepth = 0
+    error_st_induced_low = 0
+    error_induced_st = 0
+    error_induced_dyna = 0
 
     error_highflow = 0
     error_dyhigh = 0
@@ -208,21 +214,29 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
         w = gamma ** (n - i - 1)
 
         #low resolution flow
-        i_error_low = lowmask*(lowgtflow - flow_list[0][i]).abs()
+        i_error_low = stmask*(stflow - flow_list[0][i]).abs()
         # print('low flow error is {}'.format(i_error_low.mean().item()))
         error_lowflow += w*(i_error_low.mean())
 
         #low resolution dyna flow
-        i_error_dylow = i_error_low[objectmasks[:,ii]>0.5]
+        i_error_dylow = lowmask*(lowgtflow - dyflow_list[0][i]).abs()
+        i_error_dylow = i_error_dylow[objectmasks[:,ii]>0.5]
         error_dylow += w * i_error_dylow.mean()
+
+        #low resolution static flow
+        stflow_induced, stmask_induced = projective_transform(poses_est[0][i], disps_est[0][i], intrinsics, ii, jj)
+        low_v = (stmask_induced * stmask).squeeze(dim=-1)
+        i_error_st_induced_low = low_v * (stflow - stflow_induced).norm(dim=-1)
+        error_induced_st += w * i_error_st_induced_low.mean()
 
         #low resolution pose and depth
         flow_low_induced, lowmask_induced = dyprojective_transform(poses_est[0][i], disps_est[0][i], \
                                                                    intrinsics, ii, jj, validmask, objectposes_est[0][i], objectmasks)
 
         low_v = (lowmask_induced * lowmask).squeeze(dim=-1)
-        i_error_induced_low = low_v * (lowgtflow - flow_low_induced).norm(dim=-1)
-        error_induced_low += w * i_error_induced_low.mean()
+        i_error_induced_low = low_v * ((lowgtflow - stflow) - (flow_low_induced - stflow_induced)).norm(dim=-1)
+        i_error_induced_low = i_error_induced_low[objectmasks[:,ii]>0.5]
+        error_induced_dyna += w * i_error_induced_low.mean()
 
         #low resolution absolute depth
         diff_disp = torch.abs(s_lowdisps - disps_est[0][i]*scale)
@@ -283,7 +297,7 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
     epe_low = i_error_low[lowmask[..., 0] > 0.5]
     # epe_high = i_error_high[highmask[..., 0] > 0.5]
 
-    epe_induced_low = i_error_induced_low.reshape(-1)[low_v.reshape(-1)>0.5]
+    epe_induced_low = i_error_st_induced_low.reshape(-1)[low_v.reshape(-1)>0.5]
     # epe_induced_high = i_error_induced_high.reshape(-1)[high_v.reshape(-1)>0.5]
     
     metrics = {
@@ -295,6 +309,9 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
 
         'low_f_induced_error': epe_induced_low.mean().item(),
         'low_induced_1px': (epe_induced_low<1.0).float().mean().item(),
+
+        'low_f_induced_dyna_error': i_error_induced_low.mean().item(),
+        'low_induced_dyna_1px': (i_error_induced_low<1.0).float().mean().item(),
 
         # 'high_f_induced_error': epe_induced_high.mean().item(),
         # 'high_induced_1px': (epe_induced_high<1.0).float().mean().item(),
@@ -315,5 +332,5 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
         'abs_depth_low_error':i_error_lowdepth.item(),
 
     }
-    return error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, \
+    return error_lowflow, error_dylow, error_induced_st, error_induced_dyna, error_lowdepth, error_lowdynadepth, \
             metrics

@@ -10,7 +10,7 @@ from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
 from lietorch import SE3, SO3, Sim3
-from geom.ba import BA, dynamicBA, cameraBA, midasBA
+from geom.ba import BA, MoBA, dynamicBA, cameraBA, midasBA
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
@@ -117,6 +117,12 @@ class UpdateModule(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 64, 3, padding=1),
             nn.ReLU(inplace=True))
+        
+        self.flow_integrater = nn.Sequential(
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 64, 3, padding=1),
+            nn.ReLU(inplace=True))
 
         self.weight = nn.Sequential(
             nn.Conv2d(128, 128, 3, padding=1),
@@ -125,17 +131,23 @@ class UpdateModule(nn.Module):
             GradientClip(),
             nn.Sigmoid())
 
-        # self.dyweight = nn.Sequential(
-        #     nn.Conv2d(128, 128, 3, padding=1),
-        #     nn.ReLU(inplace=True),
-        #     nn.Conv2d(128, 2, 3, padding=1),
-        #     GradientClip(),
-        #     nn.Sigmoid())
+        self.dyweight = nn.Sequential(
+            nn.Conv2d(2, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 2, 3, padding=1),
+            GradientClip(),
+            nn.Sigmoid())
 
         self.delta = nn.Sequential(
             nn.Conv2d(128, 128, 3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 2, 3, padding=1),
+            GradientClip())
+        
+        self.delta_dy = nn.Sequential(
+            nn.Conv2d(2, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 2, 3, padding=1),
             GradientClip())
 
         self.gru = ConvGRU(128, 128+128+64)
@@ -157,7 +169,7 @@ class UpdateModule(nn.Module):
         batch, num, ch, ht, wd = net.shape
 
         if flow is None:
-            flow = torch.zeros(batch, num, 4, ht, wd, device=net.device)
+            flow = torch.zeros(batch, num, 8, ht, wd, device=net.device)
 
         output_dim = (batch, num, -1, ht, wd)
         net = net.view(batch*num, -1, ht, wd)
@@ -166,20 +178,27 @@ class UpdateModule(nn.Module):
         flow = flow.view(batch*num, -1, ht, wd)
 
         corr = self.corr_encoder(corr)#196->128
-        flow = self.flow_encoder(flow)#4->64
-        net = self.gru(net, inp, corr, flow)#128,128,128,64
+        flow_st = self.flow_encoder(flow[:,:4])#4->64
+        flow_dy = self.flow_encoder(flow[:,4:])
+        flow_inte = self.flow_integrater(torch.cat([flow_st, flow_dy], dim = 1))
+        net = self.gru(net, inp, corr, flow_inte)#128,128,128,64
 
         ### update variables ###
-        delta = self.delta(net).view(*output_dim)
-        weight = self.weight(net).view(*output_dim)
-        # dyweight = self.dyweight(net).view(*output_dim)
+        delta = self.delta(net)
+        weight = self.weight(net)
+        dyweight = self.dyweight(weight).view(*output_dim)
+        delta_dy = self.delta_dy(delta).view(*output_dim)
+
+        weight = weight.view(*output_dim)
+        delta = delta.view(*output_dim)
+
         # mask_flow = .25*self.mask_flow(net).view(*output_dim)
         # mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
         delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
         weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
-        # dyweight = dyweight.permute(0,1,3,4,2)[...,:2].contiguous()
-
+        dyweight = dyweight.permute(0,1,3,4,2)[...,:2].contiguous()
+        delta_dy = delta_dy.permute(0,1,3,4,2)[...,:2].contiguous()
         net = net.view(*output_dim)
 
         # if ii is not None:
@@ -187,7 +206,7 @@ class UpdateModule(nn.Module):
         #     return net, delta, weight, eta
 
         # else:
-        return net, delta, weight
+        return net, delta, delta_dy, weight, dyweight
 
 
 class DroidNet(nn.Module):
@@ -235,40 +254,41 @@ class DroidNet(nn.Module):
 
         validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
-        gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        # gtflow_st, gtmask_st = pops.projective_transform(Ps, disps, intrinsics, ii, jj)
+        # gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
-        # depth_valid = depth_valid[:, ii, ..., None]
         fmaps, net_all, inp_all = self.extract_features(images, corners, recs)
 
         ht, wd = images.shape[-2:]
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
 
-        all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, all_static_residual_list = [], [], [], [], []
+        all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, \
+            all_static_residual_list, all_dyna_residual_list, all_dyflow_list = [], [], [], [], [], [], []
 
-        # objectmasks_list, weight_list, all_weight_list, valid_list, intrinsics_list = [], [], [], [], []
+        # print('-----')
+        # print('before optimization')
+        # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+        # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
 
-        print('-----')
-        print('before optimization')
-        loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-        ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+        # print('geo loss is {}'.format(loss.item()))
+        # print('r_err is {}'.format(r_err.item()))
+        # print('t_err is {}'.format(t_err.item()))
 
-        print('geo loss is {}'.format(loss.item()))
-        print('r_err is {}'.format(r_err.item()))
-        print('t_err is {}'.format(t_err.item()))
-
-        print('ob_loss is {}'.format(ob_loss.item()))
-        print('ob_r_err is {}'.format(ob_r_err.item()))
-        print('ob_t_err is {}'.format(ob_t_err.item()))
-        print('-----')
+        # print('ob_loss is {}'.format(ob_loss.item()))
+        # print('ob_r_err is {}'.format(ob_r_err.item()))
+        # print('ob_t_err is {}'.format(ob_t_err.item()))
+        # print('-----')
 	
         for index in range(1):
-            coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            coords_dyna, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
 
             target = coords1.clone()
+            target_all = coords_dyna.clone()
             net, inp = net_all[index][:,ii], inp_all[index][:,ii]
 
-            Gs_list, disp_list, ObGs_list, flow_list, static_residual_list = [], [], [], [], []
+            Gs_list, disp_list, ObGs_list, flow_list, static_residual_list, dyna_residual_list, dyflow_list = [], [], [], [], [], [], []
 
             for step in range(num_steps):
                 Gs = Gs.detach()
@@ -276,66 +296,70 @@ class DroidNet(nn.Module):
                 disps = disps.detach()
                 coords1 = coords1.detach()
                 target = target.detach()
+                coords_dyna = coords_dyna.detach()
+                target_all = target_all.detach()
 
                 # extract motion features
                 corr = corr_fn(coords1)
                 resd = target - coords1
                 flow = coords1 - coords0
+                dyflow = coords_dyna - coords1
+                dyresd = target_all - coords_dyna
 
-                motion = torch.cat([flow, resd], dim=-1)
+                motion = torch.cat([flow, resd, dyflow, dyresd], dim=-1)
                 motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
-                net, delta, weight = \
+                net, delta, delta_dy, weight, dyweight = \
                     self.update(net, inp, corr, motion, ii, jj)
 
-                print('predicted weight is {}'.format(weight.mean().item()))
-                print('predicted dynamic weight is {}'.format(weight[objectmasks[:,ii]>0.5].mean().item()))
-                print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
+                # print('predicted weight is {}'.format(weight.mean().item()))
+                # print('predicted dynamic weight is {}'.format(dyweight[objectmasks[:,ii]>0.5].mean().item()))
+                # print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
                 target = coords1 + delta
-                print('predicted flow delta is {}'.format(delta.mean().item()))
-                # for i in range(2):
-                #     Gs, ObjectGs, a, b, midasdisps = midasBA(gtflow, gtmask, ObjectGs, objectmasks, trackinfo, validmask, \
-                #                                     eta, Gs, gtdisps, midasdisps, intrinsics, ii, jj, a, b, fixedp=2)
+                target_all = coords_dyna  + delta_dy
+                # print('predicted flow delta is {}'.format(delta.mean().item()))
                 for i in range(2):
-                    Gs, ObjectGs = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
+                    Gs = MoBA(target, weight, None, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                for i in range(2):
+                    ObjectGs = dynamicBA(target_all, dyweight, ObjectGs, objectmasks, trackinfo, validmask, \
                                                     None, Gs, disps, intrinsics, ii, jj, fixedp=2)
-                # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
-                coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
+                coords_dyna, valid_dyna = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
                                                                     validmask, ObjectGs, objectmasks)
+                coords1, valid_static = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
                 static_residual = (target - coords1)*valid_static
+                dyna_residual = (target_all - coords_dyna)*valid_dyna
 
                 Gs_list.append(Gs)
                 ObGs_list.append(ObjectGs)
                 disp_list.append(disps)
                 static_residual_list.append(static_residual)
+                dyna_residual_list.append(dyna_residual)
                 flow_list.append(target)
-                # weight_list.append(weight)
+                dyflow_list.append(target_all)
             
-            print('-----')
-            print('after optimization')
-            loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-            ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+            # print('-----')
+            # print('after optimization')
+            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
 
-            print('geo loss is {}'.format(loss.item()))
-            print('r_err is {}'.format(r_err.item()))
-            print('t_err is {}'.format(t_err.item()))
+            # print('geo loss is {}'.format(loss.item()))
+            # print('r_err is {}'.format(r_err.item()))
+            # print('t_err is {}'.format(t_err.item()))
 
-            print('ob_loss is {}'.format(ob_loss.item()))
-            print('ob_r_err is {}'.format(ob_r_err.item()))
-            print('ob_t_err is {}'.format(ob_t_err.item()))
-            print('-----')
-            if ob_r_err.item()>0.1:
-                print('bad optimization!')
+            # print('ob_loss is {}'.format(ob_loss.item()))
+            # print('ob_r_err is {}'.format(ob_r_err.item()))
+            # print('ob_t_err is {}'.format(ob_t_err.item()))
+            # print('-----')
+            # if ob_r_err.item()>0.1:
+            #     print('bad optimization!')
 
-            # intrinsics_list.append(intrinsics)
-            # all_weight_list.append(weight_list)
-            # objectmasks_list.append(objectmasks)
-            # valid_list.append(depth_valid)
             all_Gs_list.append(Gs_list)
             all_ObGs_list.append(ObGs_list)
             all_disp_list.append(disp_list)
             all_static_residual_list.append(static_residual_list)
+            all_dyna_residual_list.append(dyna_residual_list)
             all_flow_list.append(flow_list)
+            all_dyflow_list.append(dyflow_list)
 
             if index == 1:
                 # if save:
@@ -442,7 +466,7 @@ class DroidNet(nn.Module):
             # if ob_r_err.item()>0.1:
             #     print('bad optimization!')
         
-        return all_Gs_list, all_ObGs_list, all_disp_list, all_static_residual_list, all_flow_list
+        return all_Gs_list, all_ObGs_list, all_disp_list, all_static_residual_list, all_dyna_residual_list, all_flow_list, all_dyflow_list
 
 def add_neighborhood_factors(t0, t1, r=2):
     """ add edges between neighboring frames within radius r """

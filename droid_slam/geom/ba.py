@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from lietorch import SE3
 
-from .chol import block_solve, schur_solve
+from .chol import block_solve, schur_solve, block_solve_initial
 import geom.projective_ops as pops
 
 from torch_scatter import scatter_sum
@@ -160,7 +160,7 @@ def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1)
     H = H.view(B, P, P, D, D)
 
     ### 3: solve the system ###
-    dx = block_solve(H, v)
+    dx = block_solve_initial(H, v)
 
     ### 4: apply retraction ###
     poses = pose_retr(poses, dx, torch.arange(P) + fixedp)
@@ -432,15 +432,17 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
 
     r = (target - coords)
     residual = r[r!=0.0]
-    print('residual is {}'.format(torch.mean(residual)))
+    # print('residual is {}'.format(torch.mean(residual)))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
     # weight[objectmask[:,ii]>0] = valid[objectmask[:,ii]>0].repeat(1,2)
-    w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
-    # w = .001*(valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
+    w = .001*(valid*weight*objectmask[:,ii,..., None]).view(B,N,-1,1) #1,18,3030,1
+    # w = .001*(valid*weight*objectmask[:,ii,..., None]).repeat(1,1,1,1,2).view(B,N,-1,1)
 
-    Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
-    Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+    # Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+    # Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+    # Jci = torch.zeros_like(Jci)
+    # Jcj = torch.zeros_like(Jcj)
     Joi = Joi.reshape(N_car, N, -1, DO)#1,18,30,101,2,6->1,18,6060,6
     Joj = Joj.reshape(N_car, N, -1, DO)#1,18,30,101,2,6->1,18,6060,6
 
@@ -448,26 +450,24 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     ii_scatter = i*P + ii
     jj_scatter = i*P + jj
 
-    hc = scatter_sum(Jci, ii_scatter, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_scatter, dim = 1,dim_size= N*P)
-    hc = hc.view(B, N, P, -1, D).permute(0,1,3,2,4)#1,18,6060,6,6
-    hc = hc[:, :, :, fixedp:].reshape(B, N, -1, (P-fixedp)*D)
+    # hc = scatter_sum(Jci, ii_scatter, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_scatter, dim = 1,dim_size= N*P)
+    # hc = hc.view(B, N, P, -1, D).permute(0,1,3,2,4)#1,18,6060,6,6
+    # hc = hc[:, :, :, fixedp:].reshape(B, N, -1, (P-fixedp)*D)
 
     ho = scatter_sum(Joi, ii_scatter, dim = 1, dim_size= N*P) + scatter_sum(Joj, jj_scatter, dim = 1, dim_size= N*P)
     ho = ho.view(B, N, P, -1, DO).permute(0,1,3,2,4)#1,18,6,6060,3
     ho = ho[:, :, :, fixedp:].reshape(B, N, -1, (P-fixedp)*DO)
 
-    h = torch.cat((hc, ho), dim = -1)
+    # h = torch.cat((hc, ho), dim = -1)
 
-    # U = h.shape[2]
-    k = hc.shape[2]
+    k = ho.shape[2]
 
-    # h = h.transpose(2,3).contiguous().view(B, N, k, U*D)#2,14,8330,36
-    wh= h*w#2,14,8330,36
+    wh= ho*w#2,14,8330,36
 
     v = torch.matmul(wh.transpose(2,3), r)#2,14,36,8330    2,14,8330,1
     v = torch.sum(v, dim = 1).view(B,-1,1)
 
-    h = h.view(B, N*k, -1)
+    h = ho.view(B, N*k, -1)
     wh = wh.view(B, N*k, -1)
     H = torch.matmul(wh.transpose(1,2), h)###weight乘了两次！！！
     # H = H.view(B, U, D, U, D).transpose(2,3)
@@ -509,23 +509,23 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     dx = block_solve(H, v)
     # dx, dz = schur_solve(H, E, C, v, w)#1,4,6,1,5,3030
     
-    camera_dx = dx[:,:(P-fixedp)*D].reshape(-1, P-fixedp, D)
-    object_dx = dx[:,(P-fixedp)*D:].reshape(-1, P-fixedp, DO)
+    # camera_dx = dx[:,:(P-fixedp)*D].reshape(-1, P-fixedp, D)
+    object_dx = dx.reshape(-1, P-fixedp, DO)
     dx0 = torch.zeros(1,P-fixedp,1, device = object_dx.device)
     object_dx = torch.cat((object_dx[:,:,0].unsqueeze(-1),dx0, object_dx[:,:,1].unsqueeze(-1),
                            dx0,object_dx[:,:,2].unsqueeze(-1),dx0),
                            dim = -1)
-    print('update value is {}'.format(dx.mean().item()))
+    # print('update value is {}'.format(dx.mean().item()))
 
     P = P-fixedp
-    poses = pose_retr(poses, camera_dx, torch.arange(P).to(device=dx.device) + fixedp)
+    # poses = pose_retr(poses, camera_dx, torch.arange(P).to(device=dx.device) + fixedp)
     objectposes = pose_retr(objectposes, object_dx, torch.arange(P).to(device=dx.device) + fixedp)
 
     # disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
     # disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
     # disps = disps.clamp(min=0.0)
     
-    return poses, objectposes
+    return objectposes
 
 def dynamictestBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 

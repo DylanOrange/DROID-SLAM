@@ -108,34 +108,36 @@ def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
 
         if mode == 'val':
             with torch.no_grad():
-                poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
+                poses_est, objectposes_est, disps_est, static_residual_list, dyna_residual_list, flow_list, dyflow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
                                                                                                objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                                depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
                 Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
+                dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list, True)
                 static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
 
-                error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, flow_metrics, \
+                error_lowflow, error_dylow, error_induced_st, error_induced_dyna, error_lowdepth, error_lowdynadepth, flow_metrics, \
                 = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
-                                 objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
+                                 objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, dyflow_list, scale)
                
         else:
-            poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
+            poses_est, objectposes_est, disps_est, static_residual_list, dyna_residual_list, flow_list, dyflow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
                                                                                             objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                             depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
             
             geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False, object = False)
             Obgeo_loss, Obgeo_metrics = losses.geodesic_loss(ObjectPs, objectposes_est, graph, do_scale=False, object = True)
+            dyna_resi_loss, dyna_resid_metrics = losses.residual_loss(dyna_residual_list, True)
             static_resi_loss, static_resid_metrics = losses.residual_loss(static_residual_list)
 
-            error_lowflow, error_dylow, error_induced_low, error_lowdepth, error_lowdynadepth, flow_metrics, \
+            error_lowflow, error_dylow, error_induced_st, error_induced_dyna, error_lowdepth, error_lowdynadepth, flow_metrics, \
             = losses.flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_est, \
-                                objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
+                                objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, dyflow_list, scale)
 
             loss = args.w1 * geo_loss[0] + args.w1 * Obgeo_loss[0] + \
-                args.w2 * static_resi_loss[0] +\
-                args.w3 * error_induced_low
+                args.w2 * static_resi_loss[0] + args.w2 * dyna_resi_loss[0] +\
+                args.w3 * error_induced_st + args.w3 * error_induced_dyna
             
             loss.backward()
 
@@ -153,6 +155,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
         metrics.update(geo_metrics[index])
         metrics.update(Obgeo_metrics[index])
         metrics.update(static_resid_metrics[index])
+        metrics.update(dyna_resid_metrics[index])
     metrics.update(flow_metrics)
 
     loss = {
@@ -163,7 +166,8 @@ def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
 
         'error_lowflow':error_lowflow.item(),
         'error_lowdepth':error_lowdepth.item(),
-        'error_induced_low':error_induced_low.item(), 
+        'error_induced_st':error_induced_st.item(), 
+        'error_induced_dyna':error_induced_dyna.item(), 
         'error_dylow':error_dylow.item(),
         'error_lowdynadepth': error_lowdynadepth.item(),
 
@@ -258,7 +262,6 @@ def train(gpu, args):
                         print('jump val!')
                         continue
                     eval_steps += 1
-                    # total_steps += 1
 
                     if eval_steps == 60:
                         model.train()
@@ -281,11 +284,11 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='vkitti-all', help='name your experiment')
+    parser.add_argument('--name', default='overfit30', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=4)
+    parser.add_argument('--gpus', type=int, default=2)
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=12)
@@ -321,6 +324,6 @@ if __name__ == '__main__':
     # train(args)
 
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12346'
+    os.environ['MASTER_PORT'] = '12348'
     mp.spawn(train, nprocs=args.gpus, args=(args,))
 
