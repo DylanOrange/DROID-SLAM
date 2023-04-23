@@ -144,7 +144,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args):
         disps = disps_est[0][-1].detach()
 
         if skip:
-            if flow_metrics['abs_high_dyna_error'] > 1.2*flow_metrics['abs_high_error'] and Obgeo_metrics[1]['high_ob_rot_error'] > 0.5:
+            if flow_metrics['low_dyna_f_error'] > 1.2*flow_metrics['low_f_error'] and Obgeo_metrics[0]['ob_rot_error'] > 0.5:
                 print('bad optimization!')
                 return True
     metrics = {}
@@ -292,7 +292,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=15)
     parser.add_argument('--steps', type=int, default=160000)
-    parser.add_argument('--lr', type=float, default=0.000025)
+    parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=7)
 
@@ -302,7 +302,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--fmin', type=float, default=0.0)
     parser.add_argument('--fmax', type=float, default=96.0)
-    parser.add_argument('--obfmin', type=float, default=2.0)
+    parser.add_argument('--obfmin', type=float, default=16.0)
     parser.add_argument('--obfmax', type=float, default=96.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')
