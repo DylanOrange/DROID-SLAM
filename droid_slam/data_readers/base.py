@@ -272,8 +272,8 @@ class RGBDDataset(data.Dataset):
     def __getitem__(self, index):
         """ return training video """
 
-        # index = index % len(self.dataset_index)
-        index = np.random.randint(30)
+        index = index % len(self.dataset_index)
+        # index = np.random.randint(30)
 
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
@@ -293,44 +293,44 @@ class RGBDDataset(data.Dataset):
         initial_ix = ix
         inds = [ ix ]
 
-        # while len(inds) < self.n_frames:
-        #     # get other frames within flow threshold
-        #     k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
-        #     object_frames = objectgraph[ix][0][k]
-        #     # print('object flow {}'.format(frameidx_list[object_frames]))
-
-        #     camera_idx = frameidx_list[ix]
-        #     m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
-        #     camera_frames = frame_graph[camera_idx][0][m]
-        #     # print('camera flow {}'.format(camera_frames))
-
-        #     intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
-        #     frames = np.isin(frameidx_list, intersect).nonzero()[0]
-        #     # print(frames)
-        #     in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
-
-        #     if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
-        #         ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
-        #         # print(ix)
-        #     elif np.count_nonzero(frames[in20]):
-        #         ix = np.random.choice(frames[in20])
-        #         # print(ix)
-        #     else:
-        #         ix = np.random.choice(frames)
-        #         # print(ix)
-        #     inds += [ ix ]
-        # inds = np.array(inds)
-
-        # if len(np.unique(inds)) < 5:
-        ix = initial_ix
-        inds = [ix]
-        allindex = np.arange(len(frameidx_list))
         while len(inds) < self.n_frames:
-            ix = np.random.choice(allindex[np.abs(allindex-ix)==1])
+            # get other frames within flow threshold
+            k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
+            object_frames = objectgraph[ix][0][k]
+            # print('object flow {}'.format(frameidx_list[object_frames]))
+
+            camera_idx = frameidx_list[ix]
+            m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
+            camera_frames = frame_graph[camera_idx][0][m]
+            # print('camera flow {}'.format(camera_frames))
+
+            intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
+            frames = np.isin(frameidx_list, intersect).nonzero()[0]
+            # print(frames)
+            in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
+
+            if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
+                ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
+                # print(ix)
+            elif np.count_nonzero(frames[in20]):
+                ix = np.random.choice(frames[in20])
+                # print(ix)
+            else:
+                ix = np.random.choice(frames)
+                # print(ix)
             inds += [ ix ]
-            inds = list(set(inds))
         inds = np.array(inds)
-            
+
+        if len(np.unique(inds)) < 5:
+            ix = initial_ix
+            inds = [ix]
+            allindex = np.arange(len(frameidx_list))
+            while len(inds) < self.n_frames:
+                ix = np.random.choice(allindex[np.abs(allindex-ix)==1])
+                inds += [ ix ]
+                inds = list(set(inds))
+            inds = np.array(inds)
+                
         print('scene is {}'.format(scene_id))
         print('trackid is {}'.format(trackid))
         print('frames are {}'.format(inds))

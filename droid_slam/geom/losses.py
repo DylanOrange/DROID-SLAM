@@ -215,7 +215,6 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
 
         #low resolution flow
         i_error_low = stmask*(stflow - flow_list[0][i]).abs()
-        # print('low flow error is {}'.format(i_error_low.mean().item()))
         error_lowflow += w*(i_error_low.mean())
 
         #low resolution dyna flow
@@ -234,9 +233,9 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
                                                                    intrinsics, ii, jj, validmask, objectposes_est[0][i], objectmasks)
 
         low_v = (lowmask_induced * lowmask).squeeze(dim=-1)
-        i_error_induced_low = low_v * ((lowgtflow - stflow) - (flow_low_induced - stflow_induced)).norm(dim=-1)
-        i_error_induced_low = i_error_induced_low[objectmasks[:,ii]>0.5]
-        error_induced_dyna += w * i_error_induced_low.mean()
+        i_error_dyna_induced_low = low_v * ((lowgtflow - stflow) - (flow_low_induced - stflow_induced)).norm(dim=-1)
+        i_error_dyna_induced_low = i_error_dyna_induced_low[objectmasks[:,ii]>0.5]
+        error_induced_dyna += w * i_error_dyna_induced_low.mean()
 
         #low resolution absolute depth
         diff_disp = torch.abs(s_lowdisps - disps_est[0][i]*scale)
@@ -310,8 +309,8 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
         'low_f_induced_error': epe_induced_low.mean().item(),
         'low_induced_1px': (epe_induced_low<1.0).float().mean().item(),
 
-        'low_f_induced_dyna_error': i_error_induced_low.mean().item(),
-        'low_induced_dyna_1px': (i_error_induced_low<1.0).float().mean().item(),
+        'low_f_induced_dyna_error': i_error_dyna_induced_low.mean().item(),
+        'low_induced_dyna_1px': (i_error_dyna_induced_low<1.0).float().mean().item(),
 
         # 'high_f_induced_error': epe_induced_high.mean().item(),
         # 'high_induced_1px': (epe_induced_high<1.0).float().mean().item(),

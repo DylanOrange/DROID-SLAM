@@ -254,8 +254,8 @@ class DroidNet(nn.Module):
 
         validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
-        # gtflow_st, gtmask_st = pops.projective_transform(Ps, disps, intrinsics, ii, jj)
-        # gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        gtflow_st, gtmask_st = pops.projective_transform(Ps, disps, intrinsics, ii, jj)
+        gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
 
         fmaps, net_all, inp_all = self.extract_features(images, corners, recs)
 
@@ -265,19 +265,19 @@ class DroidNet(nn.Module):
         all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, \
             all_static_residual_list, all_dyna_residual_list, all_dyflow_list = [], [], [], [], [], [], []
 
-        # print('-----')
-        # print('before optimization')
-        # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-        # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+        print('-----')
+        print('before optimization')
+        loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+        ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
 
-        # print('geo loss is {}'.format(loss.item()))
-        # print('r_err is {}'.format(r_err.item()))
-        # print('t_err is {}'.format(t_err.item()))
+        print('geo loss is {}'.format(loss.item()))
+        print('r_err is {}'.format(r_err.item()))
+        print('t_err is {}'.format(t_err.item()))
 
-        # print('ob_loss is {}'.format(ob_loss.item()))
-        # print('ob_r_err is {}'.format(ob_r_err.item()))
-        # print('ob_t_err is {}'.format(ob_t_err.item()))
-        # print('-----')
+        print('ob_loss is {}'.format(ob_loss.item()))
+        print('ob_r_err is {}'.format(ob_r_err.item()))
+        print('ob_t_err is {}'.format(ob_t_err.item()))
+        print('-----')
 	
         for index in range(1):
             coords_dyna, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
@@ -314,7 +314,8 @@ class DroidNet(nn.Module):
 
                 # print('predicted weight is {}'.format(weight.mean().item()))
                 # print('predicted dynamic weight is {}'.format(dyweight[objectmasks[:,ii]>0.5].mean().item()))
-                # print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
+                print('predicted flow loss is {}'.format((gtflow_st - target).abs().mean().item()))
+                print('predicted dyna flow loss is {}'.format((gtflow - target_all).abs().mean().item()))
                 target = coords1 + delta
                 target_all = coords_dyna  + delta_dy
                 # print('predicted flow delta is {}'.format(delta.mean().item()))
@@ -337,19 +338,19 @@ class DroidNet(nn.Module):
                 flow_list.append(target)
                 dyflow_list.append(target_all)
             
-            # print('-----')
-            # print('after optimization')
-            # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
-            # ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
+            print('-----')
+            print('after optimization')
+            loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+            ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
 
-            # print('geo loss is {}'.format(loss.item()))
-            # print('r_err is {}'.format(r_err.item()))
-            # print('t_err is {}'.format(t_err.item()))
+            print('geo loss is {}'.format(loss.item()))
+            print('r_err is {}'.format(r_err.item()))
+            print('t_err is {}'.format(t_err.item()))
 
-            # print('ob_loss is {}'.format(ob_loss.item()))
-            # print('ob_r_err is {}'.format(ob_r_err.item()))
-            # print('ob_t_err is {}'.format(ob_t_err.item()))
-            # print('-----')
+            print('ob_loss is {}'.format(ob_loss.item()))
+            print('ob_r_err is {}'.format(ob_r_err.item()))
+            print('ob_t_err is {}'.format(ob_t_err.item()))
+            print('-----')
             # if ob_r_err.item()>0.1:
             #     print('bad optimization!')
 

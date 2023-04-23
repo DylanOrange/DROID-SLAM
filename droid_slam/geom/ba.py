@@ -431,8 +431,8 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
         objectmask = objectmask, Jacobian = True, batch = False)
 
     r = (target - coords)
-    residual = r[r!=0.0]
-    # print('residual is {}'.format(torch.mean(residual)))
+    # residual = r[r!=0.0]
+    print('dyna residual is {}'.format(torch.mean(r[objectmask[:,ii]>0.5])))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
     # weight[objectmask[:,ii]>0] = valid[objectmask[:,ii]>0].repeat(1,2)
