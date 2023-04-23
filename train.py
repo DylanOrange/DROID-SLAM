@@ -318,6 +318,6 @@ if __name__ == '__main__':
     # train(args)
 
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12345'
+    os.environ['MASTER_PORT'] = '12348'
     mp.spawn(train, nprocs=args.gpus, args=(args,))
 
