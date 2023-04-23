@@ -10,7 +10,7 @@ from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
 from lietorch import SE3, SO3, Sim3
-from geom.ba import BA, dynamicBA, cameraBA, midasBA
+from geom.ba import BA, dynamicBA, cameraBA, midasBA, MoBA
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
@@ -125,18 +125,18 @@ class UpdateModule(nn.Module):
             GradientClip(),
             nn.Sigmoid())
 
-        # self.dyweight = nn.Sequential(
-        #     nn.Conv2d(128, 128, 3, padding=1),
-        #     nn.ReLU(inplace=True),
-        #     nn.Conv2d(128, 2, 3, padding=1),
-        #     GradientClip(),
-        #     nn.Sigmoid())
-
         self.delta = nn.Sequential(
             nn.Conv2d(128, 128, 3, padding=1),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 2, 3, padding=1),
             GradientClip())
+
+        self.dyweight = nn.Sequential(
+            nn.Conv2d(2, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 2, 3, padding=1),
+            GradientClip(),
+            nn.Sigmoid())
 
         self.gru = ConvGRU(128, 128+128+64)
         # self.agg = GraphAgg()
@@ -171,14 +171,15 @@ class UpdateModule(nn.Module):
 
         ### update variables ###
         delta = self.delta(net).view(*output_dim)
-        weight = self.weight(net).view(*output_dim)
-        # dyweight = self.dyweight(net).view(*output_dim)
+        weight = self.weight(net)
+        dyweight = self.dyweight(weight).view(*output_dim)
+        weight = weight.view(*output_dim)
         # mask_flow = .25*self.mask_flow(net).view(*output_dim)
         # mask_weight = .25*self.mask_weight(net).view(*output_dim)
 
         delta = delta.permute(0,1,3,4,2)[...,:2].contiguous()
         weight = weight.permute(0,1,3,4,2)[...,:2].contiguous()
-        # dyweight = dyweight.permute(0,1,3,4,2)[...,:2].contiguous()
+        dyweight = dyweight.permute(0,1,3,4,2)[...,:2].contiguous()
 
         net = net.view(*output_dim)
 
@@ -187,7 +188,7 @@ class UpdateModule(nn.Module):
         #     return net, delta, weight, eta
 
         # else:
-        return net, delta, weight
+        return net, delta, weight, dyweight
 
 
 class DroidNet(nn.Module):
@@ -245,8 +246,6 @@ class DroidNet(nn.Module):
 
         all_Gs_list, all_disp_list, all_ObGs_list, all_flow_list, all_static_residual_list = [], [], [], [], []
 
-        # objectmasks_list, weight_list, all_weight_list, valid_list, intrinsics_list = [], [], [], [], []
-
         print('-----')
         print('before optimization')
         loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
@@ -285,19 +284,24 @@ class DroidNet(nn.Module):
                 motion = torch.cat([flow, resd], dim=-1)
                 motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
 
-                net, delta, weight = \
+                net, delta, weight, dyweight = \
                     self.update(net, inp, corr, motion, ii, jj)
 
                 print('predicted weight is {}'.format(weight.mean().item()))
-                print('predicted dynamic weight is {}'.format(weight[objectmasks[:,ii]>0.5].mean().item()))
+                print('predicted dynamic weight is {}'.format(dyweight[objectmasks[:,ii]>0.5].mean().item()))
+                print('predicted dynamic flow loss is {}'.format((gtflow - target)[objectmasks[:,ii]>0.5].mean().item()))
                 print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
                 target = coords1 + delta
                 print('predicted flow delta is {}'.format(delta.mean().item()))
-                # for i in range(2):
-                #     Gs, ObjectGs, a, b, midasdisps = midasBA(gtflow, gtmask, ObjectGs, objectmasks, trackinfo, validmask, \
-                #                                     eta, Gs, gtdisps, midasdisps, intrinsics, ii, jj, a, b, fixedp=2)
+                # weight = gtmask.clone()
+                # dyweight = gtmask.clone()
+                weight[objectmasks[:,ii]>0.5] = 0
+                dyweight[objectmasks[:,ii]<0.5] = 0
                 for i in range(2):
-                    Gs, ObjectGs = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
+                    Gs = MoBA(target, weight, None, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                
+                for i in range(2):
+                    ObjectGs = dynamicBA(target, dyweight, ObjectGs, objectmasks, trackinfo, validmask, \
                                                     None, Gs, disps, intrinsics, ii, jj, fixedp=2)
                 # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
                 coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
@@ -327,10 +331,6 @@ class DroidNet(nn.Module):
             if ob_r_err.item()>0.1:
                 print('bad optimization!')
 
-            # intrinsics_list.append(intrinsics)
-            # all_weight_list.append(weight_list)
-            # objectmasks_list.append(objectmasks)
-            # valid_list.append(depth_valid)
             all_Gs_list.append(Gs_list)
             all_ObGs_list.append(ObGs_list)
             all_disp_list.append(disp_list)

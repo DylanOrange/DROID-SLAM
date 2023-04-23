@@ -284,7 +284,7 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
     # epe_high = i_error_high[highmask[..., 0] > 0.5]
 
     epe_induced_low = i_error_induced_low.reshape(-1)[low_v.reshape(-1)>0.5]
-    # epe_induced_high = i_error_induced_high.reshape(-1)[high_v.reshape(-1)>0.5]
+    epe_induced_dyna = i_error_induced_low[objectmasks[:,ii]>0.5]
     
     metrics = {
         'low_f_error': epe_low.mean().item(),
@@ -295,6 +295,9 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
 
         'low_f_induced_error': epe_induced_low.mean().item(),
         'low_induced_1px': (epe_induced_low<1.0).float().mean().item(),
+
+        'low_f_dyna_induced_error': epe_induced_dyna.mean().item(),
+        'low_dyna_induced_1px': (epe_induced_dyna<1.0).float().mean().item(),
 
         # 'high_f_induced_error': epe_induced_high.mean().item(),
         # 'high_induced_1px': (epe_induced_high<1.0).float().mean().item(),

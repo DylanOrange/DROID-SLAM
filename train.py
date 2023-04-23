@@ -215,9 +215,6 @@ def train(gpu, args):
     test_sampler = torch.utils.data.distributed.DistributedSampler(
         test_db, shuffle=True, num_replicas=args.world_size, rank=gpu)
     
-    # train_loader = DataLoader(db, batch_size=args.batch, shuffle = True)
-    # test_loader = DataLoader(test_db, batch_size=args.batch, shuffle = True)
-    
     train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
     test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
 
@@ -281,7 +278,7 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='vkitti-allscene', help='name your experiment')
+    parser.add_argument('--name', default='vkitti-allscene-dyweight', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
@@ -321,6 +318,6 @@ if __name__ == '__main__':
     # train(args)
 
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12346'
+    os.environ['MASTER_PORT'] = '12345'
     mp.spawn(train, nprocs=args.gpus, args=(args,))
 
