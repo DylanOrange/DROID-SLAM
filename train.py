@@ -264,7 +264,7 @@ def train(gpu, args):
             if total_steps>80000:
                 skip = True
 
-            if total_steps % 2000 and gpu == 0:
+            if (total_steps % 2000) == 0 and gpu == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                 torch.save(model.state_dict(), PATH)
 
@@ -278,8 +278,8 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='vkitti-allscene-dyweight', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
+    parser.add_argument('--name', default='vkitti-allscene-dyweight-conti', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/vkitti-allscene-dyweight_006074.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=2)
@@ -287,7 +287,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=15)
     parser.add_argument('--steps', type=int, default=160000)
-    parser.add_argument('--lr', type=float, default=0.0001)
+    parser.add_argument('--lr', type=float, default=0.00008)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=7)
 
