@@ -175,7 +175,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
     }
     metrics.update(loss)
 
-    if gpu ==0:
+    if gpu == 0:
         if mode == 'val':
             val_metrics = {}
             for key in metrics:
@@ -206,8 +206,8 @@ def train(gpu, args):
     model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
     
     # fetch dataloader
-    db = dataset_factory(['vkitti2'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
-    test_db = dataset_factory(['vkitti2'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    db = dataset_factory(['own'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    test_db = dataset_factory(['own'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         db, shuffle=True, num_replicas=args.world_size, rank=gpu)
@@ -255,7 +255,6 @@ def train(gpu, args):
                         print('jump val!')
                         continue
                     eval_steps += 1
-                    # total_steps += 1
 
                     if eval_steps == 60:
                         model.train()
@@ -278,16 +277,16 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='vkitti-allscene-dyweight-conti', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/vkitti-allscene-dyweight_006074.pth')
+    parser.add_argument('--name', default='test', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
-    parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=2)
+    parser.add_argument('--datapath', default='/storage/slurm/xiny/dataset/cofusion/own/dataset', help="path to dataset directory")
+    parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=15)
     parser.add_argument('--steps', type=int, default=160000)
-    parser.add_argument('--lr', type=float, default=0.00008)
+    parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=7)
 
@@ -295,7 +294,7 @@ if __name__ == '__main__':
     parser.add_argument('--w2', type=float, default=0.01)
     parser.add_argument('--w3', type=float, default=0.05)
 
-    parser.add_argument('--fmin', type=float, default=0.0)
+    parser.add_argument('--fmin', type=float, default=8.0)
     parser.add_argument('--fmax', type=float, default=96.0)
     parser.add_argument('--obfmin', type=float, default=16.0)
     parser.add_argument('--obfmax', type=float, default=96.0)

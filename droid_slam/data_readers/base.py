@@ -5,6 +5,8 @@ import torch
 import torch.utils.data as data
 import torch.nn.functional as F
 import re
+import matplotlib.pyplot as plt
+from pytransform3d.trajectories import plot_trajectory
 
 import sys
 sys.path.append("..")
@@ -41,8 +43,8 @@ class RGBDDataset(data.Dataset):
         self.obfmin = obfmin # exclude very easy examples
         self.obfmax = obfmax # exclude very hard examples
 
-        self.h1 = 288
-        self.w1 = 960
+        self.h1 = 480
+        self.w1 = 640
         self.scale = 8
         self.cropscale = 2
 
@@ -213,7 +215,7 @@ class RGBDDataset(data.Dataset):
             # cropmask_list.append(torch.where(cropmask == (id+1), 1.0, 0.0))
         return torch.stack(single_masklist, dim = 0)
 
-    def build_frame_graph(self, poses, depths, intrinsics, f=16, max_flow=256):
+    def build_frame_graph(self, poses, depths, intrinsics, f=8, max_flow=256):
         """ compute optical flow distance between all pairs of frames """
         def read_disp(fn):
             depth = self.__class__.depth_read(fn)[f//2::f, f//2::f]
@@ -225,8 +227,8 @@ class RGBDDataset(data.Dataset):
         
         disps = np.stack(list(map(read_disp, depths)), 0)
         #visualzie depth
-        # for i in range(disps.shape[0]):
-        #     write_depth(os.path.join('../DeFlowSLAM/datasets/vkitti_depth_visualize', str(i)), disps[i], False)
+        for i in range(disps.shape[0]):
+            write_depth(os.path.join('./result/depth/', str(i)), disps[i], False)
         d = f * compute_distance_matrix_flow(poses, disps, intrinsics)
 
         # uncomment for nice visualization
@@ -286,6 +288,11 @@ class RGBDDataset(data.Dataset):
         insmasks_list = self.scene_info[scene_id]['objectmasks']
         # midasdepth_list = self.scene_info[scene_id]['midasdepth']
 
+        c2w = SE3(torch.from_numpy(poses_list)).inv().data.numpy()#w2c
+        ax = plot_trajectory(P=c2w[:,[0,1,2,6,3,4,5]], s=0.3, n_frames=300, normalize_quaternions=False, lw=2, c="k")
+        plt.show()
+        plt.savefig('traj.png')
+
         frameidx_list = objectinfo[trackid][0]
         objectposes_list = objectinfo[trackid][1]
         
@@ -325,7 +332,7 @@ class RGBDDataset(data.Dataset):
             inds = [ix]
             allindex = np.arange(len(frameidx_list))
             while len(inds) < self.n_frames:
-                ix = np.random.choice(allindex[np.abs(allindex-ix)==1])
+                ix = np.random.choice(allindex[np.logical_and(np.abs(allindex-ix)<10, 1<np.abs(allindex-ix))])
                 inds += [ ix ]
                 inds = list(set(inds))
             inds = np.array(inds)
@@ -360,8 +367,9 @@ class RGBDDataset(data.Dataset):
         # highdepths = np.stack(highdepths).astype(np.float32)
         # midasdepths = np.stack(midasdepths).astype(np.float32)
 
-        insmasks = np.stack(insmasks).astype(np.float32)
-        objectmasks = np.where(insmasks == (trackid+1.0), 1.0, 0.0).astype(np.float32)
+        objectmasks = np.stack(insmasks).astype(np.float32)
+        # insmasks = np.stack(insmasks).astype(np.float32)
+        # objectmasks = np.where(insmasks == (trackid+1.0), 1.0, 0.0).astype(np.float32)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].copy()
@@ -378,7 +386,6 @@ class RGBDDataset(data.Dataset):
         poses = torch.from_numpy(poses)
         objectmasks = torch.from_numpy(objectmasks)
         objectposes = torch.from_numpy(objectposes)
-        # insmasks = torch.from_numpy(insmasks)
         intrinsics = torch.from_numpy(intrinsics)
         intrinsics[:, 0:2] *= ((self.w1//self.scale)/ w0)
         intrinsics[:, 2:4] *= ((self.h1//self.scale)/ h0)

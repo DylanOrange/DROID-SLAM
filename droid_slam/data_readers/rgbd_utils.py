@@ -164,7 +164,7 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
         max = objectdepths.amax((1,2))
 
         #如何评价遮挡
-        valid = (min > 0.2) * (max < 30.0) *(app > 50)
+        valid = (min > 0.2) * (max < 30.0) *(app > 30)
 
         #如果剩下的车不到五帧，就放弃这辆车
         if len(valid[valid>0])<5:
