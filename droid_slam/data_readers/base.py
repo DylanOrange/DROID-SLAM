@@ -274,8 +274,9 @@ class RGBDDataset(data.Dataset):
     def __getitem__(self, index):
         """ return training video """
 
-        index = index % len(self.dataset_index)
+        # index = index % len(self.dataset_index)
 
+        index = 50
         scene_id, trackid, ix = self.dataset_index[index]
         objectinfo = self.scene_info[scene_id]['object']
         objectgraph = objectinfo[trackid][2]
@@ -288,59 +289,61 @@ class RGBDDataset(data.Dataset):
         insmasks_list = self.scene_info[scene_id]['objectmasks']
         # midasdepth_list = self.scene_info[scene_id]['midasdepth']
 
-        c2w = SE3(torch.from_numpy(poses_list)).inv().data.numpy()#w2c
-        ax = plot_trajectory(P=c2w[:,[0,1,2,6,3,4,5]], s=0.3, n_frames=300, normalize_quaternions=False, lw=2, c="k")
-        plt.show()
-        plt.savefig('traj.png')
+        # c2w = SE3(torch.from_numpy(poses_list)).inv().data.numpy()#w2c
+        # ax = plot_trajectory(P=c2w[:,[0,1,2,6,3,4,5]], s=0.3, n_frames=300, normalize_quaternions=False, lw=2, c="k")
+        # plt.show()
+        # plt.savefig('traj.png')
 
         frameidx_list = objectinfo[trackid][0]
         objectposes_list = objectinfo[trackid][1]
         
-        initial_ix = ix
-        inds = [ ix ]
+        # initial_ix = ix
+        # inds = [ ix ]
 
-        while len(inds) < self.n_frames:
-            # get other frames within flow threshold
-            k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
-            object_frames = objectgraph[ix][0][k]
-            # print('object flow {}'.format(frameidx_list[object_frames]))
+        # while len(inds) < self.n_frames:
+        #     # get other frames within flow threshold
+        #     k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
+        #     object_frames = objectgraph[ix][0][k]
+        #     # print('object flow {}'.format(frameidx_list[object_frames]))
 
-            camera_idx = frameidx_list[ix]
-            m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
-            camera_frames = frame_graph[camera_idx][0][m]
-            # print('camera flow {}'.format(camera_frames))
+        #     camera_idx = frameidx_list[ix]
+        #     m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
+        #     camera_frames = frame_graph[camera_idx][0][m]
+        #     # print('camera flow {}'.format(camera_frames))
 
-            intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
-            frames = np.isin(frameidx_list, intersect).nonzero()[0]
-            # print(frames)
-            in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
+        #     intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
+        #     frames = np.isin(frameidx_list, intersect).nonzero()[0]
+        #     # print(frames)
+        #     in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
 
-            if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
-                ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
-                # print(ix)
-            elif np.count_nonzero(frames[in20]):
-                ix = np.random.choice(frames[in20])
-                # print(ix)
-            else:
-                ix = np.random.choice(frames)
-                # print(ix)
-            inds += [ ix ]
+        #     if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
+        #         ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
+        #         # print(ix)
+        #     elif np.count_nonzero(frames[in20]):
+        #         ix = np.random.choice(frames[in20])
+        #         # print(ix)
+        #     else:
+        #         ix = np.random.choice(frames)
+        #         # print(ix)
+        #     inds += [ ix ]
+        # inds = np.array(inds)
+
+        # if len(np.unique(inds)) < 5:
+        #     ix = initial_ix
+        #     inds = [ix]
+        #     allindex = np.arange(len(frameidx_list))
+        #     while len(inds) < self.n_frames:
+        #         ix = np.random.choice(allindex[np.logical_and(np.abs(allindex-ix)<10, 1<np.abs(allindex-ix))])
+        #         inds += [ ix ]
+        #         inds = list(set(inds))
+        #     inds = np.array(inds)
+        
+        inds = [50,58,63,72,80,85,90]
         inds = np.array(inds)
-
-        if len(np.unique(inds)) < 5:
-            ix = initial_ix
-            inds = [ix]
-            allindex = np.arange(len(frameidx_list))
-            while len(inds) < self.n_frames:
-                ix = np.random.choice(allindex[np.logical_and(np.abs(allindex-ix)<10, 1<np.abs(allindex-ix))])
-                inds += [ ix ]
-                inds = list(set(inds))
-            inds = np.array(inds)
-            
-        print('scene is {}'.format(scene_id))
-        print('trackid is {}'.format(trackid))
-        print('frames are {}'.format(inds))
-        print('camera frames are {}'.format(frameidx_list[inds]))
+        # print('scene is {}'.format(scene_id))
+        # print('trackid is {}'.format(trackid))
+        # print('frames are {}'.format(inds))
+        # print('camera frames are {}'.format(frameidx_list[inds]))
         # for i in range(len(inds)-1):
         #     camera_frame = frameidx_list[inds[i]]
         #     next_ca_frame = frameidx_list[inds[i+1]]
@@ -391,11 +394,11 @@ class RGBDDataset(data.Dataset):
         intrinsics[:, 2:4] *= ((self.h1//self.scale)/ h0)
 
         images = images.permute(0, 3, 1, 2)
-        images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1), mode = 'bilinear')
+        # images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1), mode = 'bilinear')
 
-        if self.aug is not None:
-            highimages = self.aug(images)
-        # highimages = images
+        # if self.aug is not None:
+        #     highimages = self.aug(images)
+        highimages = images
 
         # lowimages = torch.nn.functional.interpolate(highimages, size = (self.h1//2,self.w1//2), mode = 'bilinear')
 
