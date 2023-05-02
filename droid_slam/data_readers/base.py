@@ -280,6 +280,7 @@ class RGBDDataset(data.Dataset):
 
     def __getitem__(self, index):
         """ return training video """
+        
 
         index = index % len(self.dataset_index)
 

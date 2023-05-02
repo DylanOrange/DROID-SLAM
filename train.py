@@ -9,6 +9,7 @@ from collections import OrderedDict
 
 import torch
 import torch.optim as optim
+import json
 from torch.utils.data import DataLoader
 from data_readers.factory import dataset_factory
 
@@ -207,7 +208,7 @@ def train(gpu, args):
     
     # fetch dataloader
     db = dataset_factory(['own'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
-    test_db = dataset_factory(['own'], split_mode='train', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
+    test_db = dataset_factory(['own'], split_mode='val', datapath=args.datapath, n_frames=args.n_frames, crop_size=[240, 808], fmin=args.fmin, fmax=args.fmax, obfmin=args.obfmin, obfmax=args.obfmax)
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         db, shuffle=True, num_replicas=args.world_size, rank=gpu)
@@ -234,17 +235,17 @@ def train(gpu, args):
 
             optimizer.zero_grad()
 
-            # if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
-            #     print('jump train!')
-            #     continue
+            if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
+                print('jump train!')
+                continue
             
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            # optimizer.step()
-            # scheduler.step()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+            optimizer.step()
+            scheduler.step()
             
             total_steps += 1
 
-            if total_steps % 1 == 0:
+            if total_steps % 500 == 0:
                 ##validation
                 model.eval()
                 eval_steps = 0
@@ -256,16 +257,23 @@ def train(gpu, args):
                         continue
                     eval_steps += 1
 
-                    if eval_steps == 500:
+                    if eval_steps == 60:
                         model.train()
                         break
 
             if total_steps>80000:
                 skip = True
 
-            if (total_steps % 2000) == 0 and gpu == 0:
-                PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
-                torch.save(model.state_dict(), PATH)
+            if total_steps % 2000 == 0 and gpu == 0:
+                PATH = 'checkpoints/%s_%06d' % (args.name, total_steps)
+                MODEL_PATH = PATH+'.pth'
+                INFO_PATH = PATH+'.json'
+                torch.save(model.state_dict(), MODEL_PATH)
+                train_info = {}
+                train_info['lr'] = optimizer.param_groups[0]['lr']
+                train_info['step'] = total_steps
+                with open(INFO_PATH, 'w') as file_obj:
+                    json.dump(train_info, file_obj)
 
             if total_steps >= args.steps:
                 should_keep_training = False
@@ -277,14 +285,14 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='test', help='name your experiment')
+    parser.add_argument('--name', default='object-only', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='/storage/slurm/xiny/dataset/cofusion/own/dataset', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=1)
+    parser.add_argument('--gpus', type=int, default=2)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=1)
+    parser.add_argument('--iters', type=int, default=15)
     parser.add_argument('--steps', type=int, default=160000)
     parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)

@@ -46,6 +46,7 @@ class CorrBlock:
         
         for i in range(self.num_levels):
             corr = CorrSampler.apply(self.corr_pyramid[i], coords/2**i, self.radius)
+            print('corr shape is {}'.format(corr.shape))
             out_pyramid.append(corr.view(batch, num, -1, ht, wd))
 
         return torch.cat(out_pyramid, dim=2)

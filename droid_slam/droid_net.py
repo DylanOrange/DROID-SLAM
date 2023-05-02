@@ -265,6 +265,7 @@ class DroidNet(nn.Module):
             # coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
             coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
+            print('fmap shape is {}'.format(fmaps[index][:,ii].shape))
 
             target = coords1.clone()
             net, inp = net_all[index][:,ii], inp_all[index][:,ii]
@@ -289,20 +290,20 @@ class DroidNet(nn.Module):
                 net, delta, weight = \
                     self.update(net, inp, corr, motion, ii, jj)
 
-                print('before, dynamic flow loss is {}'.format((gtflow - target)[objectmasks[:,ii]>0.5].mean().item()))
+                # print('before, dynamic flow loss is {}'.format((gtflow - target)[objectmasks[:,ii]>0.5].mean().item()))
                 target = coords1 + delta
                 print('predicted weight is {}'.format(weight.mean().item()))
                 print('predicted dynamic weight is {}'.format(weight[objectmasks[:,ii]>0.5].mean().item()))
                 print('predicted dynamic flow loss is {}'.format((gtflow - target)[objectmasks[:,ii]>0.5].mean().item()))
                 print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
-                print('predicted flow delta is {}'.format(delta.mean().item()))
-                print('first residual should be {}'.format((target - coords1)[objectmasks[:,ii]>0.5].mean().item()))
+                # print('predicted flow delta is {}'.format(delta.mean().item()))
+                # print('first residual should be {}'.format((target - coords1)[objectmasks[:,ii]>0.5].mean().item()))
 
                 # for i in range(2):
                 #     Gs = MoBA(target, weight, None, Gs, disps, intrinsics, ii, jj, fixedp=2)
-                gtmask[objectmasks[:,ii]<0.5] = 0
-                for i in range(8):
-                    Gs, ObjectGs = dynamicBA(target, gtmask, ObjectGs, objectmasks, trackinfo, validmask, \
+                weight[objectmasks[:,ii]<0.5] = 0
+                for i in range(2):
+                    Gs, ObjectGs = dynamicBA(target, weight, ObjectGs, objectmasks, trackinfo, validmask, \
                                                     None, Gs, disps, intrinsics, ii, jj, fixedp=2)
                 
                 coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \

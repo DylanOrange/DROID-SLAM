@@ -841,8 +841,8 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     print('dyna residual is {}'.format(torch.mean(r[objectmask[:,ii]>0.5])))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
-    # w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
-    w = (valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
+    w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
+    # w = (valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
