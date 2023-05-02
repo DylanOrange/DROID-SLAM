@@ -8,6 +8,7 @@ from .tartan import TartanAir
 from .vkitti2 import VKitti2
 from .car import Car4
 from .own import Own
+from .own_easy import Own_easy
 
 from .stream import ImageStream
 from .stream import StereoStream
@@ -26,6 +27,7 @@ def dataset_factory(dataset_list, **kwargs):
                     'vkitti2': (VKitti2,),
                     'car4': (Car4,),
                     'own':(Own,),
+                    'own-easy':(Own_easy,)
                     }
     db_list = []
     for key in dataset_list:

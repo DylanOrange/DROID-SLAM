@@ -25,7 +25,7 @@ def rmat_to_quad(mat):
     return quat
 
 
-class Own(RGBDDataset):
+class Own_easy(RGBDDataset):
 
     # scale depths to balance rot & trans
     DEPTH_SCALE = 1.0
@@ -38,7 +38,7 @@ class Own(RGBDDataset):
     def __init__(self, split_mode='train', **kwargs):
         self.split_mode = split_mode
         # self.midasdepth = '../MiDaS/output'
-        super(Own, self).__init__(name='Own', split_mode = self.split_mode, **kwargs)
+        super(Own_easy, self).__init__(name='Own_easy', split_mode = self.split_mode, **kwargs)
 
     @staticmethod
     def is_test_scene(scene):
@@ -51,8 +51,8 @@ class Own(RGBDDataset):
 
         #'room0_car' 深度多了两百帧
         scene_info = {}
-        scene_dir = os.listdir(osp.join(self.root, self.split_mode))
-        # scene_dir = ['room0_car']
+        # scene_dir = os.listdir(osp.join(self.root, self.split_mode))
+        scene_dir = ['room0_car', 'apartment5_car', 'apartment0_car']
         for scene in scene_dir:
             images = sorted(
                 glob.glob(osp.join(self.root, self.split_mode, scene, 'color/*.png')))
@@ -136,7 +136,7 @@ class Own(RGBDDataset):
     @staticmethod
     def depth_read(depth_file):
         depth = cv2.imread(depth_file, cv2.IMREAD_ANYCOLOR |
-                           cv2.IMREAD_ANYDEPTH) / (Own.DEPTH_SCALE)
+                           cv2.IMREAD_ANYDEPTH) / (Own_easy.DEPTH_SCALE)
         if depth.shape[-1] == 3:
             depth = depth[...,0]
         depth[depth>10.0] = 1.0

@@ -182,6 +182,7 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
     # highdisps = crop(highdisps, corner, rec)
 
     lowgtflow, lowmask = dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+    # lowgtflow, lowmask = projective_transform(Ps, disps, intrinsics, ii, jj)
     # highgtflow, highmask = dyprojective_transform(Ps, highdisps, highintrinsics, ii, jj, validmask, ObjectPs, highobjectmask)
 
     lowmask = lowmask * (disps[:,ii] > 0).float().unsqueeze(dim=-1)
@@ -219,10 +220,12 @@ def flow_loss(Ps, disps, highdisps, poses_est, disps_est, ObjectPs, objectposes_
         #low resolution pose and depth
         flow_low_induced, lowmask_induced = dyprojective_transform(poses_est[0][i], disps_est[0][i], \
                                                                    intrinsics, ii, jj, validmask, objectposes_est[0][i], objectmasks)
+        # flow_low_induced, lowmask_induced = projective_transform(poses_est[0][i], disps_est[0][i], \
+        #                                                            intrinsics, ii, jj)
 
         low_v = (lowmask_induced * lowmask).squeeze(dim=-1)
         i_error_induced_low = low_v * (lowgtflow - flow_low_induced).norm(dim=-1)
-        error_induced_low += w * i_error_induced_low.mean()
+        error_induced_low += w * ((i_error_induced_low[objectmasks[:,ii]>0.5]).mean())
 
         #low resolution absolute depth
         diff_disp = torch.abs(s_lowdisps - disps_est[0][i]*scale)

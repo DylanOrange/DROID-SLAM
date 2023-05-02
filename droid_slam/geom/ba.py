@@ -41,9 +41,8 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     coords, valid, (Ji, Jj, Jz) = pops.projective_transform(
         poses, disps, intrinsics, ii, jj, jacobian=True)
 
-    # r = (target - coords)*valid*weight
-    # # residual = r[r!=0.0]
-    # print('residual is {}'.format(torch.mean((torch.abs(r)))))
+    r = (target - coords)*valid*weight
+    print('residual is {}'.format(torch.mean((torch.abs(r)))))
 
     r = (target - coords).view(B, N, -1, 1)
     w = .001 * (valid * weight).view(B, N, -1, 1)
@@ -113,7 +112,7 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
     disps = disps.clamp(min=0.0)
 
-    return poses, disps, valid
+    return poses, disps
 
 
 def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
@@ -839,16 +838,18 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     r = (target - coords)
     # residual = r[r!=0.0]
     # residual = r[(valid*weight)[..., 0]>0.5]
-    print('residual is {}'.format(torch.mean(r)))
+    print('dyna residual is {}'.format(torch.mean(r[objectmask[:,ii]>0.5])))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
-    w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
-    # w = .001*(valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
+    # w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
+    w = (valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
 
     Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
     Joi = Joi.reshape(N_car, N, -1, D)#1,18,30,101,2,6->1,18,6060,6
     Joj = Joj.reshape(N_car, N, -1, D)#1,18,30,101,2,6->1,18,6060,6
+    Jci = torch.zeros_like(Jci)
+    Jcj = torch.zeros_like(Jcj)
 
     i = torch.arange(N).to('cuda')
     ii_scatter = i*P + ii

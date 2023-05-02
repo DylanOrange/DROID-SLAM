@@ -159,7 +159,7 @@ def prepare_object_distance_matrix_flow(allposes, alldisps, intrinsics, object):
         # mean = objectdepths.sum((1,2))/objectmasks.sum((1,2))
 
         app = torch.count_nonzero(objectmasks, dim = (1,2))
-        print(app)
+        # print(app)
         min = 1.0/(objectdisps.amax((1,2)))
         max = objectdepths.amax((1,2))
 

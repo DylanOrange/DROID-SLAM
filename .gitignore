@@ -159,3 +159,4 @@ figures/*.pdf
 copy
 *.pkl
 *.sbatch
+*.txt
