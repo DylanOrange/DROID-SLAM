@@ -7,6 +7,8 @@ import os.path as osp
 from .tartan import TartanAir
 from .vkitti2 import VKitti2
 from .car import Car4
+from .own import Own
+from .own_easy import Own_easy
 
 from .stream import ImageStream
 from .stream import StereoStream
@@ -24,6 +26,8 @@ def dataset_factory(dataset_list, **kwargs):
     dataset_map = { 'tartan': (TartanAir, ),
                     'vkitti2': (VKitti2,),
                     'car4': (Car4,),
+                    'own':(Own,),
+                    'own-easy':(Own_easy,)
                     }
     db_list = []
     for key in dataset_list:
@@ -84,4 +88,3 @@ def create_rgbdstream(dataset_path, **kwargs):
 
     db = RGBDStream(dataset_path, **kwargs)
     return DataLoader(db, shuffle=False, batch_size=1, num_workers=4)
-

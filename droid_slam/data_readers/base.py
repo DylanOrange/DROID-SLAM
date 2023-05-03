@@ -32,6 +32,7 @@ class RGBDDataset(data.Dataset):
         """ Base class for RGBD dataset """
         self.aug = None
         self.root = datapath
+        self.dataset = name
         self.name = name+'-'+split_mode
 
         self.n_frames = n_frames
@@ -41,8 +42,8 @@ class RGBDDataset(data.Dataset):
         self.obfmin = obfmin # exclude very easy examples
         self.obfmax = obfmax # exclude very hard examples
 
-        self.h1 = 288
-        self.w1 = 960
+        self.h1 = crop_size[0]
+        self.w1 = crop_size[1]
         self.scale = 8
         self.cropscale = 2
 
@@ -360,8 +361,11 @@ class RGBDDataset(data.Dataset):
         # highdepths = np.stack(highdepths).astype(np.float32)
         # midasdepths = np.stack(midasdepths).astype(np.float32)
 
-        insmasks = np.stack(insmasks).astype(np.float32)
-        objectmasks = np.where(insmasks == (trackid+1.0), 1.0, 0.0).astype(np.float32)
+        if self.dataset == 'VKitti2-all':
+            insmasks = np.stack(insmasks).astype(np.float32)
+            objectmasks = np.where(insmasks == (trackid+1.0), 1.0, 0.0).astype(np.float32)
+        else:
+            objectmasks = np.stack(insmasks).astype(np.float32)
 
         # for n, idx in enumerate(inds):
         #     vis_image = images[n].copy()
