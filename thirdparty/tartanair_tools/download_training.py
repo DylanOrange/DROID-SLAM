@@ -5,7 +5,7 @@ from os.path import isdir, isfile
 def get_args():
     parser = argparse.ArgumentParser(description='TartanAir')
 
-    parser.add_argument('--output-dir', default='./',
+    parser.add_argument('--output-dir', default='../DeFlowSLAM/datasets/',
                         help='root directory for downloaded files')
 
     parser.add_argument('--rgb', action='store_true', default=False,
@@ -46,7 +46,7 @@ def get_args():
     return args
 
 def _help():
-    print ''
+    print ('')
 
 if __name__ == '__main__':
     args = get_args()
@@ -100,7 +100,7 @@ if __name__ == '__main__':
         exit()
 
     # read all the zip file urls
-    with open('download_training_zipfiles.txt') as f:
+    with open('thirdparty/tartanair_tools/download_training_zipfiles.txt') as f:
         lines = f.readlines()
     ziplist = [ll.strip() for ll in lines if ll.strip().endswith('.zip')]
 
@@ -124,7 +124,7 @@ if __name__ == '__main__':
 
     print('{} files are going to be downloaded...'.format(len(downloadlist)))
     for fileurl in downloadlist:
-        print fileurl
+        print(fileurl)
 
     for fileurl in downloadlist:
         zf = fileurl.split('/')
@@ -155,5 +155,5 @@ if __name__ == '__main__':
             cmd = 'azcopy copy ' + fileurl + ' ' + targetfile 
         else:
             cmd = 'wget -r -O ' + targetfile + ' ' + fileurl
-        print cmd
+        print(cmd)
         system(cmd)

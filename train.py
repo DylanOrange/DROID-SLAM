@@ -205,7 +205,7 @@ def train(gpu, args):
     model.cuda()
 
     if args.ckpt == True:
-        ckpt = sorted(os.listdir(os.path.join(args.savedir, 'json')))[-1].split('.')[0]
+        ckpt = sorted(os.listdir(os.path.join(args.savedir, 'info')))[-1].split('.')[0]
         print('load ckpt!'+ckpt)
         model = load_weights(model, os.path.join(args.savedir, 'ckpt', ckpt+'.pth'), gpu)
         with open(os.path.join(args.savedir, 'info', ckpt+'.json')) as f:
