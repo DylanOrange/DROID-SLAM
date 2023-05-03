@@ -282,6 +282,7 @@ class DroidNet(nn.Module):
             coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
             coordsdyna, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
+            print('fmap is {}'.format(fmaps[index][:,ii].shape))
 
             target = coords1.clone()
             target_dyna = coordsdyna.clone()
@@ -339,7 +340,7 @@ class DroidNet(nn.Module):
                 ObGs_list.append(ObjectGs)
                 disp_list.append(disps)
                 static_residual_list.append(static_residual)
-                dyna_residual_list.append(dyna_residual[objectmasks[:,ii]>0.5])
+                dyna_residual_list.append(dyna_residual)
                 flow_list.append(target)
                 dyflow_list.append(target_dyna)
             

@@ -235,12 +235,12 @@ def train(gpu, args):
     # else:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
-        args.lr, args.steps, pct_start=0.01, cycle_momentum=False)
+        0.0001, args.steps-67440, pct_start=0.01, cycle_momentum=False)
 
     # if args.ckpt is not None:
     #     total_steps = train_info['step']
     # else:
-    total_steps = 0
+    total_steps = 67440
 
     logger = Logger(args.name, scheduler)
     should_keep_training = True
@@ -303,8 +303,8 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='newwork', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
+    parser.add_argument('--name', default='newwork-contilr-residual', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/vkitti-allscene-newnetwork_067454.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=2)
@@ -312,7 +312,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=15)
     parser.add_argument('--steps', type=int, default=160000)
-    parser.add_argument('--lr', type=float, default=0.00025)
+    parser.add_argument('--lr', type=float, default=0.0000631)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=7)
 
