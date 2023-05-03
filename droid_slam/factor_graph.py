@@ -95,6 +95,7 @@ class FactorGraph:
         # remove duplicate edges
         ii, jj = self.__filter_repeated_edges(ii, jj)
 
+
         if ii.shape[0] == 0:
             return
 
@@ -232,14 +233,12 @@ class FactorGraph:
 
             damping = .2 * self.damping[torch.unique(ii)].contiguous() + EP
 
-            # target = target.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
-            # weight = weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
+            target = target.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
+            weight = weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
 
-            # self.video.ba(target, weight, damping, ii, jj, t0, t1, 
-            #     itrs=itrs, lm=1e-4, ep=0.1, motion_only=motion_only)
-
-            self.video.dynamicba(target, weight, damping, ii, jj, t0, t1,
-                          itrs=itrs, lm=1e-4, ep=1e-2, motion_only=motion_only)
+            # dense bundle adjustment
+            self.video.ba(target, weight, damping, ii, jj, t0, t1, 
+                itrs=itrs, lm=1e-4, ep=0.1, motion_only=motion_only)
         
             if self.upsample:
                 self.video.upsample(torch.unique(self.ii), upmask)
@@ -287,14 +286,12 @@ class FactorGraph:
                 self.damping[torch.unique(iis)] = damping
 
             damping = .2 * self.damping[torch.unique(self.ii)].contiguous() + EP
-            # target = self.target.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
-            # weight = self.weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
+            target = self.target.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
+            weight = self.weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
 
-            # self.video.ba(target, weight, damping, self.ii, self.jj, 1, t, 
-            #     itrs=itrs, lm=1e-5, ep=1e-2, motion_only=False)
-
-            self.video.dynamicba(self.target, self.weight, damping, self.ii, self.jj, 1, t,
-                          itrs=itrs, lm=1e-4, ep=1e-2, motion_only=False)
+            # dense bundle adjustment
+            self.video.ba(target, weight, damping, self.ii, self.jj, 1, t, 
+                itrs=itrs, lm=1e-5, ep=1e-2, motion_only=False)
 
             self.video.dirty[:t] = True
 
@@ -326,12 +323,9 @@ class FactorGraph:
         d[ii - rad < jj] = np.inf
         d[d > 100] = np.inf
 
-        #去除已经包含在现有的ii,jj中重复的factor
         ii1 = torch.cat([self.ii, self.ii_bad, self.ii_inac], 0)
         jj1 = torch.cat([self.jj, self.jj_bad, self.jj_inac], 0)
         for i, j in zip(ii1.cpu().numpy(), jj1.cpu().numpy()):
-            # print('i is {}'.format(i))
-            # print('j is {}'.format(j))
             for di in range(-nms, nms+1):
                 for dj in range(-nms, nms+1):
                     if abs(di) + abs(dj) <= max(min(abs(i-j)-2, nms), 0):
@@ -339,12 +333,10 @@ class FactorGraph:
                         j1 = j + dj
 
                         if (t0 <= i1 < t) and (t1 <= j1 < t):
-                            # print('remove i1 {}'.format(i1))
-                            # print('remove j1 {}'.format(j1))
                             d[(i1-t0)*(t-t1) + (j1-t1)] = np.inf
 
+
         es = []
-        #在t0和t之间，选位于一定rad之内的factor
         for i in range(t0, t):
             if self.video.stereo:
                 es.append((i, i))
@@ -355,7 +347,6 @@ class FactorGraph:
                 es.append((j,i))
                 d[(i-t0)*(t-t1) + (j-t1)] = np.inf
 
-        #在distance matrix里，选距离处在一定范围内的
         ix = torch.argsort(d)
         for k in ix:
             if d[k].item() > thresh:
@@ -371,14 +362,14 @@ class FactorGraph:
             es.append((i, j))
             es.append((j, i))
 
-            # for di in range(-nms, nms+1):
-            #     for dj in range(-nms, nms+1):
-            #         if abs(di) + abs(dj) <= max(min(abs(i-j)-2, nms), 0):
-            #             i1 = i + di
-            #             j1 = j + dj
+            for di in range(-nms, nms+1):
+                for dj in range(-nms, nms+1):
+                    if abs(di) + abs(dj) <= max(min(abs(i-j)-2, nms), 0):
+                        i1 = i + di
+                        j1 = j + dj
 
-            #             if (t0 <= i1 < t) and (t1 <= j1 < t):
-            #                 d[(i1-t0)*(t-t1) + (j1-t1)] = np.inf
+                        if (t0 <= i1 < t) and (t1 <= j1 < t):
+                            d[(i1-t0)*(t-t1) + (j1-t1)] = np.inf
 
         ii, jj = torch.as_tensor(es, device=self.device).unbind(dim=-1)
         self.add_factors(ii, jj, remove)

@@ -693,8 +693,8 @@ __global__ void depth_filter_kernel(
   if (threadIdx.x == 0) {
     ix = static_cast<int>(inds[block_id]);
     jx = (neigh_id < 3) ? ix - neigh_id - 1 : ix + neigh_id;
-    printf("ix is  %f \n", ix);
-    printf("jx is  %f \n", jx);
+    // printf("ix is  %f \n", ix);
+    // printf("jx is  %f \n", jx);
     fx = intrinsics[0];
     fy = intrinsics[1];
     cx = intrinsics[2];

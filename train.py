@@ -2,7 +2,7 @@ from email.policy import strict
 from pickle import FALSE, TRUE
 import sys
 sys.path.append('droid_slam')
-
+import os
 import cv2
 import numpy as np
 import json
@@ -204,10 +204,12 @@ def train(gpu, args):
     model = DroidNet()
     model.cuda()
 
-    if args.ckpt is not None:
-        model = load_weights(model, args.ckpt, gpu)
-        # with open(args.ckpt+'.json') as f:
-        #     train_info = json.load(f)
+    if args.ckpt == True:
+        ckpt = sorted(os.listdir(os.path.join(args.savedir, 'json')))[-1].split('.')[0]
+        print('load ckpt!'+ckpt)
+        model = load_weights(model, os.path.join(args.savedir, 'ckpt', ckpt+'.pth'), gpu)
+        with open(os.path.join(args.savedir, 'info', ckpt+'.json')) as f:
+            train_info = json.load(f)
         
     model.train()
 
@@ -227,20 +229,20 @@ def train(gpu, args):
     test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
 
     # fetch optimizer
-    # if args.ckpt is not None:
-    #     optimizer = torch.optim.Adam(model.parameters(), lr=train_info['lr'], weight_decay=1e-5)
-    #     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
-    #         args.lr, args.steps-train_info['step'], pct_start=0.01, cycle_momentum=False)
+    if args.ckpt == True:
+        optimizer = torch.optim.Adam(model.parameters(), lr=train_info['lr'], weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
+            args.lr, args.steps-train_info['step'], pct_start=0.01, cycle_momentum=False)
 
-    # else:
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
-        0.0001, args.steps-67440, pct_start=0.01, cycle_momentum=False)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
+            args.lr, args.steps, pct_start=0.01, cycle_momentum=False)
 
-    # if args.ckpt is not None:
-    #     total_steps = train_info['step']
-    # else:
-    total_steps = 67440
+    if args.ckpt == True:
+        total_steps = train_info['step']
+    else:
+        total_steps = 0
 
     logger = Logger(args.name, scheduler)
     should_keep_training = True
@@ -282,10 +284,9 @@ def train(gpu, args):
             if total_steps>80000:
                 skip = True
 
-            if total_steps % 2000 == 0 and gpu == 0:
-                PATH = 'checkpoints/%s_%06d' % (args.name, total_steps)
-                MODEL_PATH = PATH+'.pth'
-                INFO_PATH = PATH+'.json'
+            if total_steps % 1000 == 0 and gpu == 0:
+                MODEL_PATH = os.path.join(args.savedir, 'ckpt', '%s_%06d' % (args.name, total_steps)+'.pth')
+                INFO_PATH = os.path.join(args.savedir, 'info', '%s_%06d' % (args.name, total_steps)+'.json')
                 torch.save(model.state_dict(), MODEL_PATH)
                 train_info = {}
                 train_info['lr'] = optimizer.param_groups[0]['lr']
@@ -304,7 +305,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
     parser.add_argument('--name', default='newwork-contilr-residual', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/vkitti-allscene-newnetwork_067454.pth')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default=True)
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
     parser.add_argument('--gpus', type=int, default=2)
@@ -312,7 +313,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--iters', type=int, default=15)
     parser.add_argument('--steps', type=int, default=160000)
-    parser.add_argument('--lr', type=float, default=0.0000631)
+    parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--n_frames', type=int, default=7)
 
@@ -332,14 +333,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     args.world_size = args.gpus
+    args.savedir = os.path.join('checkpoints', args.name)
     print(args)
 
     import os
-    if not os.path.isdir('checkpoints'):
-        os.mkdir('checkpoints')
-
-    args = parser.parse_args()
-    args.world_size = args.gpus
+    if not os.path.isdir(args.savedir):
+        os.mkdir(os.path.join(args.savedir, 'ckpt'))
+        os.mkdir(os.path.join(args.savedir, 'info'))
     # train(args)
 
     os.environ['MASTER_ADDR'] = 'localhost'

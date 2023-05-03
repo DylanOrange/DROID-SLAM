@@ -189,7 +189,7 @@ class BasicEncoder(nn.Module):
         self.in_planes = dim
         return nn.Sequential(*layers)
 
-    def forward(self, x, corners, recs):
+    def forward(self, x):
         b, n, c1, h1, w1 = x.shape
         x = x.view(b*n, c1, h1, w1)
 
