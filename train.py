@@ -109,7 +109,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
 
         if mode == 'val':
             with torch.no_grad():
-                poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Ps, Ps, ObjectGs, ObjectPs, images, \
+                poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectPs, ObjectPs, images, \
                                                                                                objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                                depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
 
@@ -122,7 +122,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
                                  objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
                
         else:
-            poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Ps, Ps, ObjectGs, ObjectPs, images, \
+            poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectPs, ObjectPs, images, \
                                                                                             objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                             depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
             
@@ -235,17 +235,17 @@ def train(gpu, args):
 
             optimizer.zero_grad()
 
-            if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
-                print('jump train!')
-                continue
+            # if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
+            #     print('jump train!')
+            #     continue
             
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            optimizer.step()
-            scheduler.step()
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+            # optimizer.step()
+            # scheduler.step()
             
             total_steps += 1
 
-            if total_steps % 500 == 0:
+            if total_steps % 1 == 0:
                 ##validation
                 model.eval()
                 eval_steps = 0
@@ -257,7 +257,7 @@ def train(gpu, args):
                         continue
                     eval_steps += 1
 
-                    if eval_steps == 60:
+                    if eval_steps == 500:
                         model.train()
                         break
 
@@ -285,14 +285,14 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='object-only', help='name your experiment')
+    parser.add_argument('--name', default='test', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='/storage/slurm/xiny/dataset/cofusion/own/dataset', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=2)
+    parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=15)
+    parser.add_argument('--iters', type=int, default=1)
     parser.add_argument('--steps', type=int, default=160000)
     parser.add_argument('--lr', type=float, default=0.00025)
     parser.add_argument('--clip', type=float, default=2.5)
@@ -304,7 +304,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--fmin', type=float, default=8.0)
     parser.add_argument('--fmax', type=float, default=96.0)
-    parser.add_argument('--obfmin', type=float, default=32.0)
+    parser.add_argument('--obfmin', type=float, default=48.0)
     parser.add_argument('--obfmax', type=float, default=96.0)
     parser.add_argument('--noise', action='store_true')
     parser.add_argument('--scale', action='store_true')

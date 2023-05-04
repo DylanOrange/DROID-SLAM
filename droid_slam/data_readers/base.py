@@ -43,8 +43,8 @@ class RGBDDataset(data.Dataset):
         self.obfmin = obfmin # exclude very easy examples
         self.obfmax = obfmax # exclude very hard examples
 
-        self.h1 = 480
-        self.w1 = 640
+        self.h1 = 360
+        self.w1 = 480
         self.scale = 8
         self.cropscale = 2
 
@@ -346,10 +346,10 @@ class RGBDDataset(data.Dataset):
             inds = np.array(inds)
         
         # inds = [50,52,54,56,58,60,62]
-        print('scene is {}'.format(scene_id))
-        print('trackid is {}'.format(trackid))
-        print('frames are {}'.format(inds))
-        print('camera frames are {}'.format(frameidx_list[inds]))
+        # print('scene is {}'.format(scene_id))
+        # print('trackid is {}'.format(trackid))
+        # print('frames are {}'.format(inds))
+        # print('camera frames are {}'.format(frameidx_list[inds]))
         # for i in range(len(inds)-1):
         #     camera_frame = frameidx_list[inds[i]]
         #     next_ca_frame = frameidx_list[inds[i+1]]
@@ -400,7 +400,7 @@ class RGBDDataset(data.Dataset):
         intrinsics[:, 1::2] *= ((self.h1//self.scale)/ h0)
 
         images = images.permute(0, 3, 1, 2)
-        # images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1), mode = 'bilinear')
+        images = torch.nn.functional.interpolate(images, size = (self.h1,self.w1), mode = 'bilinear')
 
         if self.aug is not None:
             highimages = self.aug(images)
