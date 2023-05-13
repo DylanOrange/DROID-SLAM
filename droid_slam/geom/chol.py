@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import geom.projective_ops as pops
+import numpy as np
 
 class CholeskySolver(torch.autograd.Function):
     @staticmethod
@@ -8,6 +9,7 @@ class CholeskySolver(torch.autograd.Function):
         # don't crash training if cholesky decomp fails
         try:
             U = torch.linalg.cholesky(H)
+            # print('U condition number is {}'.format(np.linalg.cond(U[0].cpu().numpy(), 2)))
             xs = torch.cholesky_solve(b, U)
             ctx.save_for_backward(U, xs)
             ctx.failed = False
@@ -29,32 +31,39 @@ class CholeskySolver(torch.autograd.Function):
 
         return dH, dz
 
-def block_solve_initial(H, b, ep=0.0001, lm=0.0001):
+def block_solve_initial(H, b, ep=0.001, lm=0.00001):
     """ solve normal equations """
     B, N, _, D, _ = H.shape
     H = H.permute(0,1,3,2,4).reshape(B, N*D, N*D)
 
     I = torch.eye(N*D).to(H.device)
+    # print('before eigen values are {}'.format(torch.linalg.eigvals(H)))
+    # print('before H condition number is {}'.format(np.linalg.cond(H[0].cpu().numpy(), 2)))
     H = H + (ep + lm*H) * I
-
+    # print('after H condition number is {}'.format(np.linalg.cond(H[0].cpu().numpy(), 2)))
+    # print('after eigen values are {}'.format(torch.linalg.eigvals(H)))
     b = b.reshape(B, N*D, 1)
 
-    # x = CholeskySolver.apply(H,b)
-    x = torch.linalg.solve(H, b)
+    x = CholeskySolver.apply(H,b)
+    # x = torch.linalg.solve(H, b)
     return x.reshape(B, N, D)
 
-def block_solve(H, b, ep=0.0001, lm=0.0001):
+def block_solve(H, b, ep=0.001, lm=0.00001):
     """ solve normal equations """
     _, K, _ = H.shape
     # H = H.permute(0,1,3,2,4).reshape(B, N*D, N*D)
 
     I = torch.eye(K).to(H.device)
-    H = H + (ep + lm*H) * I
+    # print('eigen values are {}'.format(torch.linalg.eigvals(H)))
+    # print('before H condition number is {}'.format(np.linalg.cond(H[0].cpu().numpy(), 2)))
+    H = H + (ep+lm*H) * I
+    # print('eigen values are {}'.format(torch.linalg.eigvals(H)))
+    # print('after H condition number is {}'.format(np.linalg.cond(H[0].cpu().numpy(), 2)))
 
     # b = b.reshape(B, N*D, 1)
 
-    # x = CholeskySolver.apply(H,b)
-    x = torch.linalg.solve(H, b)
+    x = CholeskySolver.apply(H,b)
+    # x = torch.linalg.solve(H, b)
     return x
 
 

@@ -10,7 +10,8 @@ from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
 from lietorch import SE3, SO3, Sim3
-from geom.ba import BA, dynamicBA, cameraBA, midasBA, MoBA
+from geom.ba import BA, dynamicBA, cameraBA, midasBA, MoBA, cameradynamicBA, BA_CICP
+import matplotlib.pyplot as plt
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
@@ -230,6 +231,8 @@ class DroidNet(nn.Module):
         recs = trackinfo['rec'][0]
 
         ii, jj, _ = graph_to_edge_list(graph)
+        # ii = torch.tensor([0,1,2,3,4,5,6])
+        # jj = torch.tensor([6,6,6,6,6,6,6])
 
         ii = ii.to(device=images.device, dtype=torch.long)
         jj = jj.to(device=images.device, dtype=torch.long)
@@ -237,8 +240,12 @@ class DroidNet(nn.Module):
         validmask = torch.ones_like(ii,dtype=torch.bool)[None]
 
         gtflow, gtmask = pops.dyprojective_transform(Ps, disps, intrinsics, ii, jj, validmask, ObjectPs, objectmasks)
+        gtflow_st, gtmask_st = pops.projective_transform(Ps, disps, intrinsics, ii, jj)
 
-        # depth_valid = depth_valid[:, ii, ..., None]
+        for i in range(gtflow.shape[1]):
+            gt_dyna_flow = flow_to_image((gtflow - gtflow_st)[0,i].detach().cpu().numpy(), objectmasks[:,ii][0,i].detach().cpu().numpy())
+            cv2.imwrite('./result/pure_dynamic_flow/' + str(i)+'_gt.png', gt_dyna_flow)
+
         fmaps, net_all, inp_all = self.extract_features(images, corners, recs)
 
         ht, wd = images.shape[-2:]
@@ -252,16 +259,17 @@ class DroidNet(nn.Module):
         ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
 
         print('geo loss is {}'.format(loss.item()))
-        print('r_err is {}'.format(r_err.item()))
-        print('t_err is {}'.format(t_err.item()))
+        # print('r_err is {}'.format(r_err.item()))
+        # print('t_err is {}'.format(t_err.item()))
 
         print('ob_loss is {}'.format(ob_loss.item()))
-        print('ob_r_err is {}'.format(ob_r_err.item()))
-        print('ob_t_err is {}'.format(ob_t_err.item()))
+        # print('ob_r_err is {}'.format(ob_r_err.item()))
+        # print('ob_t_err is {}'.format(ob_t_err.item()))
         print('-----')
 	
         for index in range(1):
             coords1, _ = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+            # coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
             corr_fn = CorrBlock(fmaps[index][:,ii], fmaps[index][:,jj], num_levels=4, radius=3)
 
             target = coords1.clone()
@@ -283,24 +291,86 @@ class DroidNet(nn.Module):
 
                 motion = torch.cat([flow, resd], dim=-1)
                 motion = motion.permute(0,1,4,2,3).clamp(-64.0, 64.0)
-
                 net, delta, weight = \
                     self.update(net, inp, corr, motion, ii, jj)
 
-                print('predicted weight is {}'.format(weight.mean().item()))
+                # print('predicted weight is {}'.format(weight.mean().item()))
                 # print('predicted dynamic weight is {}'.format(dyweight[objectmasks[:,ii]>0.5].mean().item()))
-                print('predicted dynamic flow loss is {}'.format((gtflow - target)[objectmasks[:,ii]>0.5].mean().item()))
+                print('before predicted dynamic flow loss is {}'.format((gtflow - target)[objectmasks[:,ii]>0.5].abs().mean().item()))
+                print('before predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
+                for i in range(gtflow.shape[1]):
+                    pred_dyna_flow = flow_to_image((target - gtflow_st)[0,i].detach().cpu().numpy(), objectmasks[:,ii][0,i].detach().cpu().numpy())
+                    cv2.imwrite('./result/pure_dynamic_flow/' + str(i)+'_ori.png', pred_dyna_flow)
+                target = gtflow
+                # target = torch.normal(mean = gtflow, std = 1)
+                print('predicted dynamic flow loss is {}'.format((gtflow - target)[objectmasks[:,ii]>0.5].abs().mean().item()))
                 print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
-                target = coords1 + delta
-                print('predicted flow delta is {}'.format(delta.mean().item()))
-                weight[objectmasks[:,ii]>0.5] = 0
-                for i in range(2):
-                    Gs = MoBA(target, weight, None, Gs, disps, intrinsics, ii, jj, fixedp=2)
                 
-                for i in range(2):
-                    ObjectGs = dynamicBA(target, objectmasks[:,ii, ..., None], ObjectGs, objectmasks, trackinfo, validmask, \
+                # weight[objectmasks[:,ii]<0.5] = 0
+                gtmask[objectmasks[:,ii]<0.5] = 0
+
+                # for i in range(gtflow.shape[1]):
+                #     fig = plt.figure()
+                #     plt.subplot(1, 2, 1)
+                #     plt.imshow(weight[0,i,...,0].cpu().numpy(), extent=[0, 101, 0, 30], cmap='RdGy')
+                #     plt.colorbar()
+                #     plt.subplot(1, 2, 2)
+                #     plt.imshow(weight[0,i,...,1].cpu().numpy(), extent=[0, 101, 0, 30], cmap='RdGy')
+                #     plt.colorbar()
+                #     fig.savefig('./result/pure_dynamic_flow/' + str(i)+'_weight.png')
+                #     plt.close(fig)
+
+                for i in range(gtflow.shape[1]):
+                    pred_dyna_flow = flow_to_image((target - gtflow_st)[0,i].detach().cpu().numpy(), objectmasks[:,ii][0,i].detach().cpu().numpy())
+                    cv2.imwrite('./result/pure_dynamic_flow/' + str(i)+'_pred.png', pred_dyna_flow)
+
+                # for i in range(10):
+                #     Gs = MoBA(target, gtmask, None, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                last_r = 1e+10
+                for i in range(10):
+                    ObjectGs, r, dx = dynamicBA(gtflow, images, gtmask[...,0], ObjectGs, objectmasks, trackinfo, validmask, \
                                                     None, Gs, disps, intrinsics, ii, jj, fixedp=2)
-                # evaluate_depth(gtdisps, depth_valid, a*midasdisps+b)
+                    if (last_r - r) < 1e-4 or dx.abs()<1e-4:
+                        print((last_r - r).abs())
+                        print(dx.abs())
+                        break
+                    else:
+                        last_r = r
+                
+                # last_r = 1e+10
+                # for i in range(10):
+                #     ObjectGs, r, dx = BA_ICP(gtflow, gtmask.squeeze(-1), images, Gs, disps, \
+                #                              intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+                #     if (last_r - r) < 1e-4 or dx.abs()<1e-4:
+                #         print((last_r - r).abs())
+                #         print(dx.abs())
+                #         break
+                #     else:
+                #         last_r = r
+                
+                # last_r = 1e+10
+                # for i in range(10):
+                #     Gs, r, dx = BA_CICP(gtflow_st, gtmask.squeeze(-1), images, Gs, disps, \
+                #                              intrinsics, ii, jj, validmask, ObjectGs, objectmasks)
+                #     if (last_r - r) < 1e-4 or dx.abs()<1e-4:
+                #         print((last_r - r).abs())
+                #         print(dx.abs())
+                #         break
+                #     else:
+                #         last_r = r
+
+                # last_r = 1e+10
+                # for i in range(10):
+                #     Gs = cameradynamicBA(target, gtmask, ObjectGs, objectmasks, trackinfo, validmask, \
+                #                                     None, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                    
+                    # if (last_r - r) < 1e-4 or dx.abs()<1e-4:
+                    #     print((last_r - r).abs())
+                    #     print(dx.abs())
+                    #     break
+                    # else:
+                    #     last_r = r
+                    
                 coords1, valid_static = pops.dyprojective_transform(Gs, disps, intrinsics, ii, jj, \
                                                                     validmask, ObjectGs, objectmasks)
                 static_residual = (target - coords1)*valid_static
@@ -318,12 +388,12 @@ class DroidNet(nn.Module):
             ob_loss, ob_r_err, ob_t_err = geoloss(ObjectPs, ObjectGs, ii, jj)
 
             print('geo loss is {}'.format(loss.item()))
-            print('r_err is {}'.format(r_err.item()))
-            print('t_err is {}'.format(t_err.item()))
+            # print('r_err is {}'.format(r_err.item()))
+            # print('t_err is {}'.format(t_err.item()))
 
             print('ob_loss is {}'.format(ob_loss.item()))
-            print('ob_r_err is {}'.format(ob_r_err.item()))
-            print('ob_t_err is {}'.format(ob_t_err.item()))
+            # print('ob_r_err is {}'.format(ob_r_err.item()))
+            # print('ob_t_err is {}'.format(ob_t_err.item()))
             print('-----')
             if ob_r_err.item()>0.1:
                 print('bad optimization!')

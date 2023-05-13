@@ -70,7 +70,7 @@ class DroidFrontend:
         # set pose for next itration
         self.video.poses[self.t1] = self.video.poses[self.t1-1]
         self.video.objectposes[self.t1] = self.video.objectposes[self.t1-1]
-        self.video.disps[self.t1] = self.video.disps[self.t1-1].mean()
+        # self.video.disps[self.t1] = self.video.disps[self.t1-1].mean()
 
         # update visualization
         self.video.dirty[self.graph.ii.min():self.t1] = True
@@ -97,7 +97,7 @@ class DroidFrontend:
         # self.video.normalize()
         self.video.poses[self.t1] = self.video.poses[self.t1-1].clone()
         self.video.objectposes[self.t1] = self.video.objectposes[self.t1-1].clone()
-        self.video.disps[self.t1] = self.video.disps[self.t1-4:self.t1].mean()
+        # self.video.disps[self.t1] = self.video.disps[self.t1-4:self.t1].mean()
 
         # initialization complete
         self.is_initialized = True

@@ -3,6 +3,7 @@ import lietorch
 import torch
 import torch.nn.functional as F
 from lietorch import SE3
+import matplotlib.pyplot as plt
 
 from .chol import block_solve, schur_solve, block_solve_initial
 import geom.projective_ops as pops
@@ -127,9 +128,16 @@ def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1)
     coords, valid, (Ji, Jj, Jz) = pops.projective_transform(
         poses, disps, intrinsics, ii, jj, jacobian=True)
 
+    r = (target - coords).abs()
+    print('residual is {}'.format(torch.mean(r)))
+
+    inlier = torch.where((r-r[r>0].mean()).abs() < 2*r[r>0].std(), 1, 0)
+    inlier[r==0]=0
+
     r = (target - coords).view(B, N, -1, 1)
-    w = .001 * (valid * weight).view(B, N, -1, 1)
+    # w = .001 * (valid * weight).view(B, N, -1, 1)
     # w = .001 * (valid * weight).repeat(1,1,1,1,2).view(B, N, -1, 1)
+    w = .001 * (valid * weight * inlier).view(B, N, -1, 1)
 
     ### 2: construct linear system ###
     Ji = Ji.reshape(B, N, -1, D)
@@ -695,7 +703,7 @@ def dynamictestmoBA(target, weight, objectposes, objectmask, app, validmask, eta
     v = v[:,fixedp:]
 
     ### 3: solve the system ###
-    dx = block_solve(H, v)#1,4,6,1,5,3030
+    dx = block_solve_initial(H, v)#1,4,6,1,5,3030
     # print('we optimize dx {}'.format(fixedp+torch.nonzero(torch.any(dx[1] != 0.0, dim = 1))))
 
     poses = pose_retr(poses, dx[0, None], torch.arange(P).to(device=dx.device) + fixedp)
@@ -825,7 +833,6 @@ def midasBA(target, weight, objectposes, objectmask, app, validmask, eta, poses,
 
 # def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 
-#     # app = app['apperance'][0][0]
 #     B, P, ht, wd = disps.shape#1,2,30,101
 #     N = ii.shape[0]#2
 #     D = poses.manifold_dim#6
@@ -925,12 +932,68 @@ def midasBA(target, weight, objectposes, objectmask, app, validmask, eta, poses,
     
 #     return poses, objectposes
 
-def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
+# def dynamicBA(target, images, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
+
+#     B, P, ht, wd = disps.shape#1,2,30,101
+#     N = ii.shape[0]#2
+#     D = poses.manifold_dim#6
+#     DO = 3
+#     N_car = objectmask.shape[0]
+
+#     ### 1: co mpute jacobians and residuals ###
+#     coords, valid, (Jci, Jcj, Joi, Joj) = pops.dyprojective_transform(
+#         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, \
+#         objectmask = objectmask, Jacobian = True, batch = False)
+
+#     vis_r = (target - coords).abs()
+#     vis_r[objectmask[:,ii]<0.5]=0
+
+#     inlier = torch.where((vis_r-vis_r[objectmask[:,ii]>0.5].mean()).abs() < 1*vis_r[objectmask[:,ii]>0.5].std(), 1, 0)
+#     print('dyna residual is {}'.format(torch.mean(vis_r[objectmask[:,ii]>0.5])))
+
+#     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
+#     w = .001*(valid*weight*inlier).view(B,N,-1,1)#1,22,6060,1
+
+#     Joi = Joi.reshape(N_car, N, -1, DO)#1,18,30,101,2,6->1,18,6060,6
+#     Joj = Joj.reshape(N_car, N, -1, DO)#1,18,30,101,2,6->1,18,6060,6
+
+#     i = torch.arange(N).to('cuda')
+#     ii_scatter = i*P + ii
+#     jj_scatter = i*P + jj
+
+#     ho = scatter_sum(Joi, ii_scatter, dim = 1, dim_size= N*P) + scatter_sum(Joj, jj_scatter, dim = 1, dim_size= N*P)
+#     ho = ho.view(B, N, P, -1, DO).permute(0,1,3,2,4)#1,22,6060,6,3
+#     ho = ho[:, :, :, fixedp:].reshape(B, N, -1, (P-fixedp)*DO)#1,22,6060,15
+
+#     k = ho.shape[2]
+
+#     wh= ho*w#2,14,8330,36
+
+#     v = torch.matmul(wh.transpose(2,3), r)#1,22,15,1
+#     v = torch.sum(v, dim = 1).view(B,-1,1)#1,15,1
+
+#     h = ho.view(B, N*k, -1)
+#     wh = wh.view(B, N*k, -1)
+#     H = torch.matmul(wh.transpose(1,2), h)###weight乘了两次！！！
+  
+#     dx = block_solve(H, v)
+    
+#     object_dx = dx.reshape(-1, P-fixedp, DO)
+#     dx0 = torch.zeros(1,P-fixedp,1, device = object_dx.device)
+#     object_dx = torch.cat((object_dx[:,:,0].unsqueeze(-1),dx0, object_dx[:,:,1].unsqueeze(-1),
+#                            dx0,object_dx[:,:,2].unsqueeze(-1),dx0),
+#                            dim = -1)
+
+#     P = P-fixedp
+#     objectposes = pose_retr(objectposes, object_dx, torch.arange(P).to(device=dx.device) + fixedp)
+    
+#     return objectposes, torch.mean(vis_r[objectmask[:,ii]>0.5]), dx.mean()
+
+def cameradynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
 
     B, P, ht, wd = disps.shape#1,2,30,101
     N = ii.shape[0]#2
     D = poses.manifold_dim#6
-    DO = 3
     N_car = objectmask.shape[0]
 
     ### 1: co mpute jacobians and residuals ###
@@ -938,13 +1001,156 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
         poses, disps, intrinsics, ii, jj, validmask, objectposes = objectposes, \
         objectmask = objectmask, Jacobian = True, batch = False)
 
-    r = (target - coords)
-    print('dyna residual is {}'.format(torch.mean(r[objectmask[:,ii]>0.5])))
+    r = (target - coords).abs()
+    inlier = torch.where((r-r.mean()).abs() < 3*r.std(), 1, 0)
+    print('residual is {}'.format(torch.mean((r))))
 
     r = (target - coords).view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
-    # weight[objectmask[:,ii]>0] = valid[objectmask[:,ii]>0].repeat(1,2)
-    # w = .001*(valid*weight).view(B,N,-1,1) #1,18,3030,1
-    w = .001*(valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1) #1,18,3030,1
+    w = .001*(valid*weight*inlier).view(B,N,-1,1) #1,18,3030,1
+    # w = .001*(valid*weight).repeat(1,1,1,1,2).view(B,N,-1,1)
+
+    Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+    Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+
+    i = torch.arange(N).to('cuda')
+    ii_scatter = i*P + ii
+    jj_scatter = i*P + jj
+
+    hc = scatter_sum(Jci, ii_scatter, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_scatter, dim = 1,dim_size= N*P)
+    hc = hc.view(B, N, P, -1, D)#1,14,5,6060,6
+
+    h = hc[:, :, fixedp:]
+
+    U = h.shape[2]
+    k = hc.shape[3]
+
+    h = h.transpose(2,3).contiguous().view(B, N, k, U*D)#2,14,8330,36
+    wh= h*w#2,14,8330,36
+
+    v = torch.matmul(wh.transpose(2,3), r)#2,14,36,8330    2,14,8330,1
+    v = torch.sum(v, dim = 1).view(B,U,D)
+
+    h = h.view(B, N*k, U*D)
+    wh = wh.view(B, N*k, U*D)
+    H = torch.matmul(wh.transpose(1,2), h)###weight乘了两次！！！
+    H = H.view(B, U, D, U, D).transpose(2,3)
+
+    dx = block_solve_initial(H, v)
+    # print('update value is {}'.format(dx.mean().item()))
+
+    P = P-fixedp
+    poses = pose_retr(poses, dx, torch.arange(P).to(device=dx.device) + fixedp)
+
+    return poses
+
+# def BA_ICP(target, weight, images, poses, disps, intrinsics, ii, jj, validmask, objectposes, objectmask, fixedp = 2):
+
+#     B, P, _, _ = disps.shape#1,2,30,101
+#     N = ii.shape[0]#2
+#     DO = 3
+#     N_car = objectmask.shape[0]
+
+#     icp_residual, J_icp = pops.icp_residual(target, images, poses, disps, intrinsics, ii, jj, validmask, objectposes, objectmask)
+
+#     vis_r = icp_residual.abs()
+
+#     inlier = torch.where((vis_r-vis_r[objectmask[:,ii]>0.5].mean()).abs() < 3*vis_r[objectmask[:,ii]>0.5].std(), 1, 0)
+#     print('icp residual is {}'.format(torch.mean(vis_r[objectmask[:,ii]>0.5])))
+
+#     w = .001*(weight*inlier).view(B,N,-1,1)#1,22,3030,1
+
+#     icp_residual = icp_residual.view(N_car, N, -1, 1)#1,22,3030,1
+#     J_icp = J_icp.reshape(N_car, N, -1, DO)#1,22,3030,3
+#     JtJ = torch.matmul((w*J_icp).transpose(2,3), J_icp)#1,22,3,3030 * #1,22,3030,3
+#     JtJ = safe_scatter_add_mat(JtJ, jj-fixedp, jj-fixedp, P-fixedp, P-fixedp).view(N_car, P-fixedp, P-fixedp, DO, DO)#1,5,5,3,3
+#     JtJ = JtJ.transpose(2,3).reshape(B, (P-fixedp)*DO, (P-fixedp)*DO)
+
+#     vicp = torch.matmul((w*J_icp).transpose(2,3), icp_residual).squeeze(-1)#1,22,3,3030 * 1,22,3030,1
+#     vicp = safe_scatter_add_vec(vicp, jj-fixedp, P-fixedp)#1,5,3
+#     vicp = vicp.view(B,-1,1)
+
+#     dx = block_solve(JtJ, vicp)
+#     object_dx = dx.reshape(-1, P-fixedp, DO)
+#     dx0 = torch.zeros(1,P-fixedp,1, device = object_dx.device)
+#     object_dx = torch.cat((object_dx[:,:,0].unsqueeze(-1),dx0, object_dx[:,:,1].unsqueeze(-1),
+#                            dx0,object_dx[:,:,2].unsqueeze(-1),dx0),
+#                            dim = -1)
+
+#     P = P-fixedp
+#     objectposes = pose_retr(objectposes, object_dx, torch.arange(P).to(device=dx.device) + fixedp)
+
+#     return objectposes, torch.mean(vis_r[objectmask[:,ii]>0.5]), dx.mean()
+
+def BA_CICP(target, weight, images, poses, disps, intrinsics, ii, jj, validmask, objectposes, objectmask, fixedp = 2):
+
+    B, P, _, _ = disps.shape#1,2,30,101
+    N = ii.shape[0]#2
+    D = 6
+
+    icp_residual, Jci, Jcj = pops.icp_residual(target, images, poses, disps, intrinsics, ii, jj, validmask, objectposes, objectmask)
+
+    vis_r = icp_residual.abs()
+
+    inlier = torch.where((vis_r-vis_r.mean()).abs() < 1*vis_r.std(), 1, 0)
+    print('icp residual is {}'.format(torch.mean(vis_r)))
+
+    r = icp_residual.view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
+    w = .001*(weight*inlier).view(B,N,-1,1)#1,22,3030,1
+
+    Jci = Jci.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+    Jcj = Jcj.reshape(B, N, -1, D) #1,18,30,101,2,6->1,18,6060,6
+
+    i = torch.arange(N).to('cuda')
+    ii_scatter = i*P + ii
+    jj_scatter = i*P + jj
+
+    hc = scatter_sum(Jci, ii_scatter, dim = 1,dim_size= N*P) + scatter_sum(Jcj, jj_scatter, dim = 1,dim_size= N*P)
+    hc = hc.view(B, N, P, -1, D)#1,14,5,6060,6
+
+    h = hc[:, :, fixedp:]
+
+    U = h.shape[2]
+    k = hc.shape[3]
+
+    h = h.transpose(2,3).contiguous().view(B, N, k, U*D)#2,14,8330,36
+    wh= h*w#2,14,8330,36
+
+    v = torch.matmul(wh.transpose(2,3), r)#2,14,36,8330    2,14,8330,1
+    v = torch.sum(v, dim = 1).view(B,U,D)
+
+    h = h.view(B, N*k, U*D)
+    wh = wh.view(B, N*k, U*D)
+    H = torch.matmul(wh.transpose(1,2), h)###weight乘了两次！！！
+    H = H.view(B, U, D, U, D).transpose(2,3)
+
+    dx = block_solve_initial(H, v)
+    # print('update value is {}'.format(dx.mean().item()))
+
+    P = P-fixedp
+    poses = pose_retr(poses, dx, torch.arange(P).to(device=dx.device) + fixedp)
+
+    return poses, torch.mean(vis_r), dx.mean()
+
+def dynamicBA(target, images, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=0):
+
+    B, P, ht, wd = disps.shape#1,2,30,101
+    N = ii.shape[0]#2
+    D = poses.manifold_dim#6
+    DO = 3
+    N_car = objectmask.shape[0]
+    
+    icp_residual, valid, Joi, Joj = pops.icp_residual(target, images, poses, disps, intrinsics, ii, jj, validmask, objectposes, objectmask)
+
+    vis_r = icp_residual.abs()
+    vis_r[objectmask[:,ii]<0.5]=0
+
+    inlier = torch.where((vis_r-vis_r[objectmask[:,ii]>0.5].mean()).abs() < 1*vis_r[objectmask[:,ii]>0.5].std(), 1, 0)
+
+    # useless = torch.nonzero(((r-r[r>0].mean()).abs() < 3*r[r>0].std()), as_tuple = True)
+    print('dyna residual is {}'.format(torch.mean(vis_r[objectmask[:,ii]>0.5])))
+
+    r = icp_residual.view(B, N, -1, 1) #1,18,30,101,2-> 1,18,6060,1
+    w = .001*(valid*weight*inlier).view(B,N,-1,1)#1,22,6060,1
 
     Joi = Joi.reshape(N_car, N, -1, DO)#1,18,30,101,2,6->1,18,6060,6
     Joj = Joj.reshape(N_car, N, -1, DO)#1,18,30,101,2,6->1,18,6060,6
@@ -954,15 +1160,15 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     jj_scatter = i*P + jj
 
     ho = scatter_sum(Joi, ii_scatter, dim = 1, dim_size= N*P) + scatter_sum(Joj, jj_scatter, dim = 1, dim_size= N*P)
-    ho = ho.view(B, N, P, -1, DO).permute(0,1,3,2,4)#1,18,6,6060,3
-    ho = ho[:, :, :, fixedp:].reshape(B, N, -1, (P-fixedp)*DO)
+    ho = ho.view(B, N, P, -1, DO).permute(0,1,3,2,4)#1,22,6060,6,3
+    ho = ho[:, :, :, fixedp:].reshape(B, N, -1, (P-fixedp)*DO)#1,22,6060,15
 
     k = ho.shape[2]
 
     wh= ho*w#2,14,8330,36
 
-    v = torch.matmul(wh.transpose(2,3), r)#2,14,36,8330    2,14,8330,1
-    v = torch.sum(v, dim = 1).view(B,-1,1)
+    v = torch.matmul(wh.transpose(2,3), r)#1,22,15,1
+    v = torch.sum(v, dim = 1).view(B,-1,1)#1,15,1
 
     h = ho.view(B, N*k, -1)
     wh = wh.view(B, N*k, -1)
@@ -975,9 +1181,8 @@ def dynamicBA(target, weight, objectposes, objectmask, app, validmask, eta, pose
     object_dx = torch.cat((object_dx[:,:,0].unsqueeze(-1),dx0, object_dx[:,:,1].unsqueeze(-1),
                            dx0,object_dx[:,:,2].unsqueeze(-1),dx0),
                            dim = -1)
-    print('update value is {}'.format(dx.mean().item()))
 
     P = P-fixedp
     objectposes = pose_retr(objectposes, object_dx, torch.arange(P).to(device=dx.device) + fixedp)
     
-    return objectposes
+    return objectposes, torch.mean(vis_r[objectmask[:,ii]>0.5]), dx.mean()

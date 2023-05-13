@@ -1,7 +1,7 @@
 import cv2
 from matplotlib.transforms import BboxBase
 import torch
-import lietorch
+from lietorch import SE3
 import numpy as np
 import random
 from collections import OrderedDict
@@ -51,22 +51,19 @@ class MotionFilter:
     @torch.cuda.amp.autocast(enabled=True)
     def __context_encoder(self, image):
         """ context features """
-        net, inp = self.cnet(image).split([128,128], dim=2)
+        net, inp = self.cnet(image, None, None).split([128,128], dim=2)
         return net.tanh().squeeze(0), inp.relu().squeeze(0)
 
     @torch.cuda.amp.autocast(enabled=True)
     def __feature_encoder(self, image):
         """ features for correlation volume """
-        return self.fnet(image).squeeze(0)
+        return self.fnet(image, None, None).squeeze(0)
 
     # @torch.cuda.amp.autocast(enabled=True)
     @torch.no_grad()
     def track(self, tstamp, image, objectmask, instance_mask, posegt, objectposegt, dispgt, depth=None, intrinsics=None):
         """ main update operation - run on every frame in video """
 
-        # Id = torch.as_tensor(
-        #     [0.37732657, -271.64998866, -1.05244905, -0.00972557, 0.90465151, -0.00738998, 0.42597706], dtype=torch.float)
-        Id = self.video.poses[0].squeeze() # initialization
         ht = image.shape[-2] // 8
         wd = image.shape[-1] // 8
 
@@ -84,39 +81,34 @@ class MotionFilter:
 
             ### always add first frame to the depth video ###
             if self.video.counter.value == 0:
-                print('---add one keyframe to video---')
-                #count number of pixels for each car
+                print('---add one keyframe to video---')           
 
-                if len(bbox) !=  0:
-                    self.bbox = bbox
-                    self.carcount = len(bbox)
-                    trackid  = torch.arange(self.carcount)
-                    self.trackid = trackid
-
-                # arearank = torch.bincount(instance_mask.flatten())
-                # valid = arearank[arearank>0].shape[0]
-                # trackid = torch.argsort(arearank)[-valid:]
-                # trackid = trackid[trackid!=0]-1
+                self.trackid = [0,1,3]
+                # if len(bbox) !=  0:
+                #     self.bbox = bbox
+                #     self.carcount = len(bbox)
+                #     trackid  = torch.arange(self.carcount)
+                #     self.trackid = trackid
                 
                 net, inp = self.__context_encoder(inputs[:, [0]])
                 self.net, self.inp, self.fmap = net, inp, gmap#([1, 128, 30, 101])
                 self.video.append(
-                    tstamp, image[0], Id, None, depth, intrinsics / 8.0, gmap, net[0, 0], inp[0, 0], objectmask, posegt, objectposegt, dispgt, None)#第一帧net,inp只加了128个维度中的一个
+                    tstamp, image[0], SE3(posegt).inv().data[0], None, 1.0/dispgt, intrinsics / 8.0, gmap, net[0, 0], inp[0, 0], objectmask, posegt, objectposegt, dispgt, None)#第一帧net,inp只加了128个维度中的一个
 
-                for id in trackid:
+                for id in self.trackid:
                     self.video.objectgraph[int(id)] = [tstamp]
 
-                self.instance_mask = instance_mask
+                # self.instance_mask = instance_mask
 
-                img = image[0].permute(1,2,0).numpy()
-                vis_bbox = bbox.cpu().numpy()
-                vis_mask = masks.cpu().numpy()
-                for i, id in enumerate(trackid):
-                    rgb_mask, color = self.random_colour_masks(vis_mask[i], id.cpu().numpy())
-                    img = cv2.addWeighted(img, 1, rgb_mask, 0.5, 0)
-                    cv2.rectangle(img, (vis_bbox[i][0], vis_bbox[i][1]) , (vis_bbox[i][2], vis_bbox[i][3]) ,color=color, thickness=1)
-                    cv2.putText(img,'car_'+str(int(id)), (vis_bbox[i][0], vis_bbox[i][1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color,thickness=1, lineType=cv2.LINE_AA)
-                cv2.imwrite('./result/segmentation/'+str(tstamp)+'.png',img)
+                # img = image[0].permute(1,2,0).numpy()
+                # vis_bbox = bbox.cpu().numpy()
+                # vis_mask = masks.cpu().numpy()
+                # for i, id in enumerate(trackid):
+                #     rgb_mask, color = self.random_colour_masks(vis_mask[i], id.cpu().numpy())
+                #     img = cv2.addWeighted(img, 1, rgb_mask, 0.5, 0)
+                #     cv2.rectangle(img, (vis_bbox[i][0], vis_bbox[i][1]) , (vis_bbox[i][2], vis_bbox[i][3]) ,color=color, thickness=1)
+                #     cv2.putText(img,'car_'+str(int(id)), (vis_bbox[i][0], vis_bbox[i][1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color,thickness=1, lineType=cv2.LINE_AA)
+                # cv2.imwrite('./result/segmentation/'+str(tstamp)+'.png',img)
 
             ### only add new frame if there is enough motion ###
             else:
@@ -125,38 +117,37 @@ class MotionFilter:
                 corr = CorrBlock(self.fmap[None, [0]], gmap[None, [0]])(coords0)
 
                 # approximate flow magnitude using 1 update iteration
-                _, delta, _ = self.update(
-                    self.net[None], self.inp[None], corr)
+                _, delta, _ = self.update(self.net[None], self.inp[None], corr)
 
                 # check motion magnitue / add new frame to video
                 flow_camera = delta[..., 0:2].norm(dim=-1).mean()
 
-                if len(bbox)!=0:
-                    if self.bbox is not None:
-                        iou = box_iou(bbox, self.bbox)
-                        #如果最大的iou>0.5，判断为同一个，加入trackid list, <0.7的在trackid 后面加新的id
-                        corr = torch.amax(iou, dim = 1)
-                        corrid = torch.argmax(iou[corr>=self.iou_threshold], dim = 1)
-                        trackid = torch.cat((self.trackid[corrid], torch.arange(self.carcount, self.carcount + len(iou[corr<self.iou_threshold]))))
-                        self.carcount += len(iou[corr<self.iou_threshold])
-                        self.bbox = bbox
-                        self.trackid = trackid
-                    else:
-                        self.bbox = bbox
-                        self.carcount = len(bbox)
-                        trackid  = torch.arange(self.carcount)
-                        self.trackid = trackid
+                # if len(bbox)!=0:
+                #     if self.bbox is not None:
+                #         iou = box_iou(bbox, self.bbox)
+                #         #如果最大的iou>0.5，判断为同一个，加入trackid list, <0.7的在trackid 后面加新的id
+                #         corr = torch.amax(iou, dim = 1)
+                #         corrid = torch.argmax(iou[corr>=self.iou_threshold], dim = 1)
+                #         trackid = torch.cat((self.trackid[corrid], torch.arange(self.carcount, self.carcount + len(iou[corr<self.iou_threshold]))))
+                #         self.carcount += len(iou[corr<self.iou_threshold])
+                #         self.bbox = bbox
+                #         self.trackid = trackid
+                #     else:
+                #         self.bbox = bbox
+                #         self.carcount = len(bbox)
+                #         trackid  = torch.arange(self.carcount)
+                #         self.trackid = trackid
 
-                #visualize data association
-                img = image[0].permute(1,2,0).numpy()
-                vis_bbox = bbox.cpu().numpy()
-                vis_mask = masks.cpu().numpy()
-                for i, id in enumerate(trackid):
-                    rgb_mask, color = self.random_colour_masks(vis_mask[i], id.cpu().numpy())
-                    img = cv2.addWeighted(img, 1, rgb_mask, 0.5, 0)
-                    cv2.rectangle(img, (vis_bbox[i][0], vis_bbox[i][1]) , (vis_bbox[i][2], vis_bbox[i][3]) ,color=color, thickness=1)
-                    cv2.putText(img,'car_'+str(int(id)), (vis_bbox[i][0], vis_bbox[i][1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color,thickness=1, lineType=cv2.LINE_AA)
-                cv2.imwrite('./result/segmentation/'+str(tstamp)+'.png',img)
+                # #visualize data association
+                # img = image[0].permute(1,2,0).numpy()
+                # vis_bbox = bbox.cpu().numpy()
+                # vis_mask = masks.cpu().numpy()
+                # for i, id in enumerate(trackid):
+                #     rgb_mask, color = self.random_colour_masks(vis_mask[i], id.cpu().numpy())
+                #     img = cv2.addWeighted(img, 1, rgb_mask, 0.5, 0)
+                #     cv2.rectangle(img, (vis_bbox[i][0], vis_bbox[i][1]) , (vis_bbox[i][2], vis_bbox[i][3]) ,color=color, thickness=1)
+                #     cv2.putText(img,'car_'+str(int(id)), (vis_bbox[i][0], vis_bbox[i][1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color,thickness=1, lineType=cv2.LINE_AA)
+                # cv2.imwrite('./result/segmentation/'+str(tstamp)+'.png',img)
 
                 #check dynamic flow
                 flow_object = []
@@ -176,7 +167,7 @@ class MotionFilter:
                     net, inp = self.__context_encoder(inputs[:, [0]])
                     self.net, self.inp, self.fmap = net, inp, gmap
                     self.video.append(
-                        tstamp, image[0], None, None, depth, intrinsics / 8.0, gmap, net[0], inp[0], objectmask, posegt, objectposegt, dispgt, None)
+                        tstamp, image[0], None, None, 1/dispgt, intrinsics / 8.0, gmap, net[0], inp[0], objectmask, posegt, objectposegt, dispgt, None)
                     
                     self.instance_mask = instance_mask
                     for idx, id in enumerate(self.video.objectgraph):

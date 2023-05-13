@@ -1,7 +1,10 @@
 import torch
 import torch.nn.functional as F
-
+import numpy as np
 from lietorch import SE3, Sim3
+import cv2
+import matplotlib.pyplot as plt
+
 
 MIN_DEPTH = 0.2
 
@@ -247,7 +250,7 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
     validobjectmask = objectmask[:, ii]*validmask[..., None, None]#2,12,30,101
     # objectmask = objectmask[:, ii]#2,12,30,101
     fullmask = torch.sum(objectmask[:, ii], dim = 0, keepdim = True)
-    Gijobject =  poses[:, jj] * objectposes[:, jj].inv() * objectposes[:, ii] * poses[:, ii].inv()#2,12,1
+    Gijobject =  poses[:, jj] * objectposes[:, jj].inv() * objectposes[:, ii] * poses[:, ii].inv()#cjTw * wToj * oiTw * wTci 
     Gjj = poses[:, jj] * objectposes[:, jj].inv()#2,12,1
     Gijobject.data[:, ii == jj] = torch.as_tensor(
         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype = Gij.data.dtype,device=Gij.device) 
@@ -301,3 +304,158 @@ def dyprojective_transform(poses, depths, intrinsics, ii, jj, validmask = None, 
         return x1, valid, (Jci, Jcj, Joi, Joj)
 
     return x1, valid
+
+def icp_residual(flow, images, poses, depths, intrinsics, ii, jj, validmask, objectposes, objectmask, jacobian=True):
+    # warped_depth = warp(depths, images, flow, ii, jj)
+    B, _, ht,wd = depths.shape
+
+    Xi, _ = iproj(depths[:, ii], intrinsics[:, ii], jacobian = True, batch_grid= None)#1,22,30,101,4
+    Xj, _ = iproj(depths[:, jj], intrinsics[:, jj], jacobian = True, batch_grid= None)#1,22,30,101,4
+
+    Xi = Xi/(Xi[..., 3].unsqueeze(-1))
+    Xj = Xj/(Xj[..., 3].unsqueeze(-1))
+
+    warped_Xi= warp(Xj, images, flow, ii, jj)
+
+    Gij = poses[:, ii] * objectposes[:,ii].inv() * objectposes[:,jj] * poses[:, jj].inv()
+    Xj = Gij[:, :, None, None] * warped_Xi
+
+    x1, _ = proj(Xj, intrinsics[:,ii], return_depth=True)
+    di = depths[:,ii]*objectmask[:,ii]
+    dj = x1[...,2]*objectmask[:,ii]
+    valid = ((x1[...,0]>0) & (x1[...,0]<wd) & (x1[...,1]>0) & (x1[...,1]<ht) & ((dj-di)<3.0)).float()
+    # for i in range(dj.shape[1]):
+    #     write_depth('result/warp/'+str(i)+'_depth.png', di[0,i].cpu().numpy(), False)
+    #     write_depth('result/warp/'+str(i)+'_warpdepth.png', dj[0,i].cpu().numpy(), False)
+
+    normal = get_surface_normal_by_depth(1.0/depths[:, ii], intrinsics)#1,22,30,101,4
+    residual = ((normal*(Xi-Xj)).sum(dim=-1))*objectmask[:,ii]
+    # for i in range(residual.shape[1]):
+    #     fig = plt.figure()
+    #     plt.imshow(residual[0,i].cpu().numpy(), extent=[0, 404, 0, 120], cmap='RdGy')
+    #     plt.colorbar()
+    #     fig.savefig('./result/warp/' + str(i)+'_residual.png')
+    #     plt.close(fig)
+    
+    if jacobian:
+        
+        Gii = poses[:, ii] * objectposes[:, ii].inv()#2,12,1
+        Jn = normal.unsqueeze(-2)
+
+        X, Y, Z, d = Xj.unbind(dim=-1)#2,12,30,101,4
+        o = torch.zeros_like(d)
+        B, N, H, W = d.shape
+
+        J1 = torch.stack([
+            d,  o,  o,  o,  Z, -Y,
+            o,  d,  o, -Z,  o,  X,
+            o,  o,  d,  Y, -X,  o,
+            o,  o,  o,  o,  o,  o,
+        ], dim=-1).view(B, N, H, W, 4, 6)
+
+        Jcj = torch.matmul(Jn, J1)#2,12,30,101,2,6
+
+        Joj = Gii[:, :, None, None, None].adjT(Jcj)
+        Joi = -Joj
+
+        Ji = torch.matmul(Jn, J1)
+        Jj = -Gij[:, :, None, None, None].adjT(Ji)
+        
+        Jdof = torch.zeros(6,3, device = Joi.device)
+        Jdof[0,0] = Jdof[2,1] = Jdof[4,2] = 1
+
+        Joi = torch.matmul(Joi, Jdof)
+        Joj = torch.matmul(Joj, Jdof)
+
+    return residual, valid, Joi, Joj
+
+def warp(depths, images, flow, ii, jj):
+
+    B, N, ht, wd, D = depths.shape
+    images = images[:,:,:,3::8,3::8]
+
+    grid_x = flow[..., 0]/(wd-1)
+    grid_y = flow[..., 1]/(ht-1)
+    grid = torch.stack([grid_x, grid_y], dim=-1).view(-1, ht, wd, 2)
+    grid = grid * 2 - 1
+
+    # for i in range(ii.shape[0]):
+    #     cv2.imwrite('result/warp/'+str(i)+'_image.png', images[:,ii][0,i].permute(1,2,0).cpu().numpy())
+        # write_depth('result/warp/'+str(i)+'_depth.png', depths[:,ii][0,i].cpu().numpy(), False)
+
+    depths = depths.permute(0,1,4,2,3).view(B*N, D, ht, wd)
+    images = images[0, jj]
+
+    warped_depths = F.grid_sample(
+            depths, grid, mode='nearest', padding_mode="border", align_corners=False)
+    warped_images = F.grid_sample(
+            images, grid, mode='nearest', padding_mode="border", align_corners=False)
+
+    warped_depths = warped_depths.permute(0,2,3,1).view(B,N,ht,wd,D)
+    # for i in range(warped_depths.shape[1]):
+    #     cv2.imwrite('result/warp/'+str(i)+'warpimage.png', warped_images[i].permute(1,2,0).cpu().numpy())
+        # write_depth('result/warp/'+str(i)+'_warpdepth.png', warped_depths[0,i].cpu().numpy(), False)
+    return warped_depths
+
+def get_surface_normal_by_depth(depth, K):
+    """
+    depth: (h, w) of float, the unit of depth is meter
+    K: (3, 3) of float, the depth camere's intrinsic
+    """
+    fx, fy = K[0,0,0], K[0,0,1]
+
+    b, c, d = torch.gradient(depth[0])
+    # b1, c1, d1 = np.gradient(depth)  # u, v mean the pixel coordinate in the image
+    # u*depth = fx*x + cx --> du/dx = fx / depth
+    du_dx = fx / depth  # x is xyz of camera coordinate
+    dv_dy = fy / depth
+
+    dz_dx = c * du_dx
+    dz_dy = d * dv_dy
+    # cross-product (1,0,dz_dx)X(0,1,dz_dy) = (-dz_dx, -dz_dy, 1)
+    normal_cross = torch.stack((-dz_dx, -dz_dy, torch.ones_like(depth)), dim=-1)
+    # normalize to unit vector
+    normal_unit = normal_cross / torch.linalg.norm(normal_cross, dim=-1, keepdims=True)
+    normal_unit[~torch.isfinite(normal_unit).all(4)] = torch.tensor([0, 0, 1], dtype=torch.float, device = normal_unit.device)
+
+    # vis_normal = lambda normal: np.uint8((normal + 1) / 2 * 255)[..., ::-1]
+    # for i in range(depth.shape[1]):
+    #     cv2.imwrite('result/warp/{}_normal.png'.format(i), vis_normal(normal_unit[0,i].cpu().numpy()))
+
+    normal = torch.cat((normal_unit, torch.zeros_like(depth).unsqueeze(-1)), dim = -1)
+    return normal
+
+
+def write_depth(path, depth, grayscale, bits=1):
+    """Write depth map to png file.
+    Args:
+        path (str): filepath without extension
+        depth (array): depth
+        grayscale (bool): use a grayscale colormap?
+    """
+    if not grayscale:
+        bits = 1
+
+    if not np.isfinite(depth).all():
+        depth=np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+        print("WARNING: Non-finite depth values present")
+
+    depth_min = depth.min()
+    depth_max = depth.max()
+
+    max_val = (2**(8*bits))-1
+
+    if depth_max - depth_min > np.finfo("float").eps:
+        out = max_val * (depth - depth_min) / (depth_max - depth_min)
+    else:
+        out = np.zeros(depth.shape, dtype=depth.dtype)
+
+    if not grayscale:
+        out = cv2.applyColorMap(np.uint8(out), cv2.COLORMAP_INFERNO)
+
+    if bits == 1:
+        cv2.imwrite(path + ".png", out.astype("uint8"))
+    elif bits == 2:
+        cv2.imwrite(path + ".png", out.astype("uint16"))
+
+    return

@@ -108,7 +108,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
 
         if mode == 'val':
             with torch.no_grad():
-                poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
+                poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Ps, Ps, ObjectGs, ObjectPs, images, \
                                                                                                objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                                depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
 
@@ -121,7 +121,7 @@ def step(model, item, mode, logger, skip, save, total_steps, args, gpu):
                                  objectmasks, highmask, trackinfo, intrinsics, graph, flow_list, scale)
                
         else:
-            poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Gs, Ps, ObjectGs, ObjectPs, images, \
+            poses_est, objectposes_est, disps_est, static_residual_list, flow_list = model(Ps, Ps, ObjectGs, ObjectPs, images, \
                                                                                             objectmasks, highmask, disps, disps, highdisps, intrinsics.clone(), trackinfo,\
                                                                                             depth_valid, high_depth_valid, save, total_steps, graph, num_steps=args.iters, fixedp=2)
             
@@ -215,8 +215,8 @@ def train(gpu, args):
     test_sampler = torch.utils.data.distributed.DistributedSampler(
         test_db, shuffle=True, num_replicas=args.world_size, rank=gpu)
     
-    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=2)
-    test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=2)
+    train_loader = DataLoader(db, batch_size=args.batch, sampler=train_sampler, num_workers=1)
+    test_loader = DataLoader(test_db, batch_size=args.batch, sampler=test_sampler, num_workers=1)
 
     # fetch optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -234,17 +234,17 @@ def train(gpu, args):
 
             optimizer.zero_grad()
 
-            if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
-                print('jump train!')
-                continue
+            # if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
+            #     print('jump train!')
+            #     continue
             
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            optimizer.step()
-            scheduler.step()
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+            # optimizer.step()
+            # scheduler.step()
             
             total_steps += 1
 
-            if total_steps % 500 == 0:
+            if total_steps % 1 == 0:
                 ##validation
                 model.eval()
                 eval_steps = 0
@@ -257,14 +257,14 @@ def train(gpu, args):
                     eval_steps += 1
                     # total_steps += 1
 
-                    if eval_steps == 60:
+                    if eval_steps == 500:
                         model.train()
                         break
 
             if total_steps>80000:
                 skip = True
 
-            if total_steps % 2000 and gpu == 0:
+            if total_steps % 2000 == 0 and gpu == 0:
                 PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                 torch.save(model.state_dict(), PATH)
 
@@ -278,14 +278,14 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--name', default='vkitti-allscene-dyweight1', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore', default='droid.pth')
+    parser.add_argument('--name', default='test', help='name your experiment')
+    parser.add_argument('--ckpt', help='checkpoint to restore', default='checkpoints/vkitti-allscene-conti_022000.pth')
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='../DeFlowSLAM/datasets/vkitti2', help="path to dataset directory")
-    parser.add_argument('--gpus', type=int, default=2)
+    parser.add_argument('--gpus', type=int, default=1)
 
     parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--iters', type=int, default=15)
+    parser.add_argument('--iters', type=int, default=1)
     parser.add_argument('--steps', type=int, default=160000)
     parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--clip', type=float, default=2.5)

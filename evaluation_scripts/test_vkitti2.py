@@ -115,8 +115,8 @@ def image_stream(datapath, trackID, image_size=[240, 808], mode='val'):
     Id = torch.as_tensor([ -3.0760, 270.0000, -24.5112,  -0.0000,  -0.9526,  -0.0000,   0.3043], dtype=torch.double)
 
     split = {
-        'train': 'clone',
-        'val': '15-deg-left',
+        'train': '15-deg-left',
+        'val': 'clone',
         'test': '30-deg-right'
     }
 
@@ -128,10 +128,6 @@ def image_stream(datapath, trackID, image_size=[240, 808], mode='val'):
     
     depths_list = sorted(glob.glob(os.path.join(
         datapath, split[mode], 'frames/depth/Camera_0/*.png')))
-    
-    # pose_path = os.path.join(datapath, split[mode], 'extrinsic.txt')
-
-    # objectpose_path = os.path.join(datapath, split[mode], 'pose.txt')
 
     for t, imfile in enumerate(images_list):
         #read image
@@ -165,8 +161,7 @@ def image_stream(datapath, trackID, image_size=[240, 808], mode='val'):
 
         if not trackID:
                 objectmasks = torch.zeros(1,h1//8,w1//8)
-                objectpose_gt = Id[None]
-        
+                objectpose_gt = Id[None]       
         else:
             for id in trackID:
                 objectmask = np.where((maskarray == (id+1)), 1, 0)
@@ -186,8 +181,8 @@ def image_stream(datapath, trackID, image_size=[240, 808], mode='val'):
 
         #read intrinsics
         intrinsics = torch.as_tensor([fx, fy, cx, cy])
-        intrinsics[0:2] *= (w1 / w0)
-        intrinsics[2:4] *= (h1 / h0)
+        intrinsics[0::2] *= (w1 / w0)
+        intrinsics[1::2] *= (h1 / h0)
 
         yield t, image[None], objectmasks[None], instance_mask[None], intrinsics, pose_gt[None], objectpose_gt[None], dispgt[None]
 
@@ -196,10 +191,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--datapath", default = '../DeFlowSLAM/datasets/vkitti2/Scene20')
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--weights", default="checkpoints/12_2_objectgraph_smconsobflow_oldconf_032000.pth")
+    parser.add_argument("--weights", default="checkpoints/vkitti-allscene-conti_022000.pth")
     parser.add_argument("--buffer", type=int, default=1000)
-    parser.add_argument("--image_size", default=[240, 808])
-    parser.add_argument("--disable_vis", action="store_true", default= True)
+    parser.add_argument("--image_size", default=[288, 960])
+    parser.add_argument("--disable_vis", default= True)
     parser.add_argument("--beta", type=float, default=0.6)
     parser.add_argument("--filter_thresh", type=float, default=1.75)
     parser.add_argument("--filter_obthresh", type=float, default=0.0)

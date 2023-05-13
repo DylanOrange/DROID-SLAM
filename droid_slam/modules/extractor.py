@@ -140,7 +140,7 @@ class BasicEncoder(nn.Module):
         self.conv1 = nn.Conv2d(3, DIM, kernel_size=7, stride=2, padding=3)
         self.relu1 = nn.ReLU(inplace=True)
 
-        self.in_planes = DIM
+        self.in_planes = DIM #32
         self.layer1 = self._make_layer(DIM,  stride=1)
         self.layer2 = self._make_layer(2*DIM, stride=2)
         self.layer3 = self._make_layer(4*DIM, stride=2)

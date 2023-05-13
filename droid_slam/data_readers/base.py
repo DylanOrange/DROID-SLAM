@@ -41,8 +41,8 @@ class RGBDDataset(data.Dataset):
         self.obfmin = obfmin # exclude very easy examples
         self.obfmax = obfmax # exclude very hard examples
 
-        self.h1 = 288
-        self.w1 = 960
+        self.h1 = 240
+        self.w1 = 808
         self.scale = 8
         self.cropscale = 2
 
@@ -292,47 +292,47 @@ class RGBDDataset(data.Dataset):
         initial_ix = ix
         inds = [ ix ]
 
+        # while len(inds) < self.n_frames:
+        #     # get other frames within flow threshold
+        #     k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
+        #     object_frames = objectgraph[ix][0][k]
+        #     # print('object flow {}'.format(frameidx_list[object_frames]))
+
+        #     camera_idx = frameidx_list[ix]
+        #     m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
+        #     camera_frames = frame_graph[camera_idx][0][m]
+        #     # print('camera flow {}'.format(camera_frames))
+
+        #     intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
+        #     frames = np.isin(frameidx_list, intersect).nonzero()[0]
+        #     # print(frames)
+        #     in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
+
+        #     if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
+        #         ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
+        #         # print(ix)
+        #     elif np.count_nonzero(frames[in20]):
+        #         ix = np.random.choice(frames[in20])
+        #         # print(ix)
+        #     else:
+        #         ix = np.random.choice(frames)
+        #         # print(ix)
+        #     inds += [ ix ]
+        # inds = np.array(inds)
+
+        # if len(np.unique(inds)) < 5:
+        ix = initial_ix
+        inds = [ix]
+        allindex = np.arange(len(frameidx_list))
         while len(inds) < self.n_frames:
-            # get other frames within flow threshold
-            k = (objectgraph[ix][1] > self.obfmin) & (objectgraph[ix][1] < self.obfmax)
-            object_frames = objectgraph[ix][0][k]
-            # print('object flow {}'.format(frameidx_list[object_frames]))
-
-            camera_idx = frameidx_list[ix]
-            m = (frame_graph[camera_idx][1] > self.fmin) & (frame_graph[camera_idx][1] < self.fmax)
-            camera_frames = frame_graph[camera_idx][0][m]
-            # print('camera flow {}'.format(camera_frames))
-
-            intersect = np.intersect1d(frameidx_list[object_frames], camera_frames)
-            frames = np.isin(frameidx_list, intersect).nonzero()[0]
-            # print(frames)
-            in20 = np.logical_and(np.abs(frames-ix)<10, 0<np.abs(frames-ix))
-
-            if np.count_nonzero(frames[np.logical_and(frames>ix, in20)]):
-                ix = np.random.choice(frames[np.logical_and(frames>ix, in20)])
-                # print(ix)
-            elif np.count_nonzero(frames[in20]):
-                ix = np.random.choice(frames[in20])
-                # print(ix)
-            else:
-                ix = np.random.choice(frames)
-                # print(ix)
+            ix = np.random.choice(allindex[np.abs(allindex-ix)<3])
             inds += [ ix ]
-        inds = np.array(inds)
-
-        if len(np.unique(inds)) < 5:
-            ix = initial_ix
-            inds = [ix]
-            allindex = np.arange(len(frameidx_list))
-            while len(inds) < self.n_frames:
-                ix = np.random.choice(allindex[np.abs(allindex-ix)==1])
-                inds += [ ix ]
-                inds = list(set(inds))
-            inds = np.array(inds)
+            inds = list(set(inds))
+        inds = np.sort(np.array(inds))
             
-        print('scene is {}'.format(scene_id))
-        print('trackid is {}'.format(trackid))
-        print('frames are {}'.format(inds))
+        # print('scene is {}'.format(scene_id))
+        # print('trackid is {}'.format(trackid))
+        # print('frames are {}'.format(inds))
         print('camera frames are {}'.format(frameidx_list[inds]))
         # for i in range(len(inds)-1):
         #     camera_frame = frameidx_list[inds[i]]
@@ -394,7 +394,7 @@ class RGBDDataset(data.Dataset):
 
         corners, recs = [], []
         highmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1//2, self.w1//2)).squeeze(1)
-        lowmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
+        lowmask = torch.nn.functional.interpolate(objectmasks[:, None], size = (self.h1//self.scale, self.w1//self.scale)).squeeze(1)
         mask = highmask.clone()
         for level in range(3):
             corner, rec = self.cornerinfo(highmask)
@@ -412,7 +412,7 @@ class RGBDDataset(data.Dataset):
         #     cv2.imwrite('./result/crop/'+str(frameidx_list[inds][i])+'.png',img[i])
 
         #normalize
-        lowdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//8, self.w1//8)).squeeze(1)
+        lowdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//self.scale, self.w1//self.scale)).squeeze(1)
         highdepths = torch.nn.functional.interpolate(depths[:, None], size = (self.h1//2, self.w1//2)).squeeze(1)
         
         disps = 1.0/lowdepths
@@ -441,6 +441,8 @@ class RGBDDataset(data.Dataset):
             highdisps = highdisps / s
             poses[...,:3] *= s
             objectposes[...,:3] *= s
+
+        # normal_unit = get_surface_normal_by_depth(1.0/disps, intrinsics)
 
         # a_list, b_list = [], []
         # for i in range(disps.shape[0]):
@@ -511,4 +513,31 @@ def write_depth(path, depth, grayscale, bits=1):
 
     return
 
+
+def get_surface_normal_by_depth(depth, K=None):
+    """
+    depth: (h, w) of float, the unit of depth is meter
+    K: (3, 3) of float, the depth camere's intrinsic
+    """
+    fx, fy = K[0,0], K[0,1]
+
+    b, c, d = torch.gradient(depth)
+    # b1, c1, d1 = np.gradient(depth)  # u, v mean the pixel coordinate in the image
+    # u*depth = fx*x + cx --> du/dx = fx / depth
+    du_dx = fx / depth  # x is xyz of camera coordinate
+    dv_dy = fy / depth
+
+    dz_dx = c * du_dx
+    dz_dy = d * dv_dy
+    # cross-product (1,0,dz_dx)X(0,1,dz_dy) = (-dz_dx, -dz_dy, 1)
+    normal_cross = torch.stack((-dz_dx, -dz_dy, torch.ones_like(depth)), dim=-1)
+    # normalize to unit vector
+    normal_unit = normal_cross / torch.linalg.norm(normal_cross, dim=-1, keepdims=True)
+    normal_unit[~torch.isfinite(normal_unit).all(3)] = torch.tensor([0, 0, 1], dtype=torch.float)
+
+    # vis_normal = lambda normal: ((normal + 1) / 2 * 255).to(torch.uint8)[..., ::-1]
+    vis_normal = lambda normal: np.uint8((normal + 1) / 2 * 255)[..., ::-1]
+
+    for i in range(depth.shape[0]):
+        cv2.imwrite('{}_normal.png'.format(i), vis_normal(normal_unit[i].numpy()))
 

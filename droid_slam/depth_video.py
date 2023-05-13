@@ -346,14 +346,14 @@ class DepthVideo:
         t0 = t0 - min
 
         for i in range(itrs):
-            if (motion_only == False):
-               poses, objectposes, disps= ba.dynamictestBA(target, weight, objectposes, objectmask,  app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=t0)
-            else:
-                poses, objectposes, disps = ba.dynamictestmoBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=t0)
+            # if (motion_only == False):
+            #    poses, objectposes, disps= ba.dynamictestBA(target, weight, objectposes, objectmask,  app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=t0)
+            # else:
+            poses, objectposes, disps = ba.dynamictestmoBA(target, weight, objectposes, objectmask, app, validmask, eta, poses, disps, intrinsics, ii, jj, fixedp=t0)
         
         self.poses[min:max+1] = poses.data
         self.objectposes[min:max+1] = objectposes.data.transpose(1,0)
-        self.disps[min:max+1] = disps
+        # self.disps[min:max+1] = disps
 
 
 def vis(mask, index):
