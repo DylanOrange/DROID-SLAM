@@ -119,6 +119,7 @@ def projective_transform(poses, depths, intrinsics, ii, jj, jacobian=False, retu
 
         Jz = Gij[:,:,None,None] * Jz
         Jz = torch.matmul(Jp, Jz.unsqueeze(-1))
+        # Jz = Jz*midasdisps[:,ii,...,None,None]
 
         return x1, valid, (Ji, Jj, Jz)
 

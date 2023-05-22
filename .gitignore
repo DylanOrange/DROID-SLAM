@@ -158,4 +158,5 @@ figures/*.pdf
 *.png
 *.npy
 copy
+*.sbatch
 

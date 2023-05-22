@@ -22,7 +22,8 @@ class RGBDDataset(data.Dataset):
         """ Base class for RGBD dataset """
         self.aug = None
         self.root = datapath
-        self.name = name+'-droid-midas-'+split_mode
+        self.name = name
+        self.split_mode = split_mode
 
         self.n_frames = n_frames
         self.fmin = fmin # exclude very easy examples
@@ -50,15 +51,28 @@ class RGBDDataset(data.Dataset):
                 
     def _build_dataset_index(self):
         self.dataset_index = []
-        for scene in self.scene_info:
-            if not self.__class__.is_test_scene(scene):
-                graph = self.scene_info[scene]['graph']
-                for i in graph:
-                    if len(graph[i][0]) > self.n_frames:
-                        self.dataset_index.append((scene, i))
-            else:
-                print("Reserving {} for validation".format(scene))
-
+        if self.split_mode == 'train':
+            n_scene = 0
+            for scene in self.scene_info:
+                n_scene += 1
+                if not self.__class__.is_test_scene(scene):
+                    graph = self.scene_info[scene]['graph']
+                    for i in graph:
+                        if len(graph[i][0]) > self.n_frames:
+                            self.dataset_index.append((scene, i))
+                if n_scene == len(self.scene_info)//3:
+                    break
+        else:
+            n_scene = 0
+            for scene in self.scene_info:
+                n_scene += 1
+                if self.__class__.is_test_scene(scene):
+                    graph = self.scene_info[scene]['graph']
+                    for i in graph:
+                        if len(graph[i][0]) > self.n_frames:
+                            self.dataset_index.append((scene, i))
+                if n_scene == len(self.scene_info)//3:
+                    break
     @staticmethod
     def image_read(image_file):
         return cv2.imread(image_file)
@@ -150,7 +164,7 @@ class RGBDDataset(data.Dataset):
         depths_list = self.scene_info[scene_id]['depths']
         poses_list = self.scene_info[scene_id]['poses']
         intrinsics_list = self.scene_info[scene_id]['intrinsics']
-        midasdepth_list = self.scene_info[scene_id]['midasdepth']
+        midasdepth_list = self.scene_info[scene_id]['midasdepths']
 
         inds = [ ix ]
         while len(inds) < self.n_frames:
@@ -171,7 +185,7 @@ class RGBDDataset(data.Dataset):
         for i in inds:
             images.append(self.__class__.image_read(images_list[i]))
             depths.append(self.__class__.depth_read(depths_list[i]))
-            midasdepths.append(self.read_pfm(midasdepth_list[i])[0])
+            midasdepths.append(self.__class__.read_pfm(midasdepth_list[i])[0])
             poses.append(poses_list[i])
             intrinsics.append(intrinsics_list[i])
 
@@ -224,7 +238,7 @@ class RGBDDataset(data.Dataset):
         b = torch.stack(b_list, dim=0)[..., None, None]
         midasdisps = a*midasdisps+b
 
-        return images, poses, disps, midasdisps, intrinsics 
+        return images, poses, disps, midasdisps, intrinsics, a, b 
 
     def __len__(self):
         return len(self.dataset_index)

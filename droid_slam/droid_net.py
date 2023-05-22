@@ -188,19 +188,19 @@ class DroidNet(nn.Module):
         coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
         target = coords1.clone()
 
-        gtflow, _ = pops.projective_transform(Ps, gtdisps[:,:,3::8,3::8], intrinsics, ii, jj)
+        # gtflow, _ = pops.projective_transform(Ps, gtdisps[:,:,3::8,3::8], intrinsics, ii, jj)
 
         Gs_list, disp_list, residual_list = [], [], []
 
-        print('-----')
-        print('before optimization')
-        loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+        # print('-----')
+        # print('before optimization')
+        # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
 
-        print('geo loss is {}'.format(loss.item()))
-        print('r_err is {}'.format(r_err.item()))
-        print('t_err is {}'.format(t_err.item()))
+        # print('geo loss is {}'.format(loss.item()))
+        # print('r_err is {}'.format(r_err.item()))
+        # print('t_err is {}'.format(t_err.item()))
 
-        print('-----')
+        # print('-----')
 
         for step in range(num_steps):
             Gs = Gs.detach()
@@ -221,9 +221,9 @@ class DroidNet(nn.Module):
 
             target = coords1 + delta
 
-            print('predicted weight is {}'.format(weight.mean().item()))
-            print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
-            print('predicted flow delta is {}'.format(delta.mean().item()))
+            # print('predicted weight is {}'.format(weight.mean().item()))
+            # print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
+            # print('predicted flow delta is {}'.format(delta.mean().item()))
 
             for i in range(2):
                 Gs, disps = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
@@ -235,16 +235,15 @@ class DroidNet(nn.Module):
             disp_list.append(upsample_disp(disps, upmask))
             residual_list.append(valid_mask * residual)
 
-        print('-----')
-        print('after optimization')
-        loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
+        # print('-----')
+        # print('after optimization')
+        # loss, r_err, t_err = geoloss(Ps, Gs, ii, jj)
 
-        print('geo loss is {}'.format(loss.item()))
-        print('r_err is {}'.format(r_err.item()))
-        print('t_err is {}'.format(t_err.item()))
+        # print('geo loss is {}'.format(loss.item()))
+        # print('r_err is {}'.format(r_err.item()))
+        # print('t_err is {}'.format(t_err.item()))
         
-        print('-----')
-
+        # print('-----')
 
         return Gs_list, disp_list, residual_list
 

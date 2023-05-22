@@ -3,6 +3,7 @@ import os.path as osp
 
 import torch
 from lietorch import SE3
+import cv2
 
 import geom.projective_ops as pops
 from scipy.spatial.transform import Rotation
@@ -188,3 +189,37 @@ def compute_distance_matrix_flow2(poses, disps, intrinsics, beta=0.4):
         matrix[i1, j1] = mag.cpu().numpy()
 
     return matrix
+
+def write_depth(path, depth, grayscale, bits=1):
+    """Write depth map to png file.
+    Args:
+        path (str): filepath without extension
+        depth (array): depth
+        grayscale (bool): use a grayscale colormap?
+    """
+    if not grayscale:
+        bits = 1
+
+    if not np.isfinite(depth).all():
+        depth=np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+        print("WARNING: Non-finite depth values present")
+
+    depth_min = depth.min()
+    depth_max = depth.max()
+
+    max_val = (2**(8*bits))-1
+
+    if depth_max - depth_min > np.finfo("float").eps:
+        out = max_val * (depth - depth_min) / (depth_max - depth_min)
+    else:
+        out = np.zeros(depth.shape, dtype=depth.dtype)
+
+    if not grayscale:
+        out = cv2.applyColorMap(np.uint8(out), cv2.COLORMAP_INFERNO)
+
+    if bits == 1:
+        cv2.imwrite(path + ".png", out.astype("uint8"))
+    elif bits == 2:
+        cv2.imwrite(path + ".png", out.astype("uint16"))
+
+    return
