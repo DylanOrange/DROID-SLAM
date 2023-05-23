@@ -67,7 +67,9 @@ def schur_solve(H, E, C, v, w, ep=0.1, lm=0.0001, sless=False):
         return dx.reshape(B, P, D)
 
     dz = Q * (w - Et @ dx)    
+    # dz = Q * w 
     dx = dx.reshape(B, P, D)
     dz = dz.reshape(B, M, HW)
+    # dx = torch.zeros_like(dx)
 
     return dx, dz

@@ -77,9 +77,13 @@ def step(model, item, mode, logger, args, gpu):
     Gs.data[:,0] = Ps.data[:,0].clone()
     Gs.data[:,1:] = Ps.data[:,[1]].clone()
     #droid
-    disp0 = torch.ones_like(disps[:,:,3::8,3::8])
+    # disp0 = torch.ones_like(disps[:,:,3::8,3::8])
     #midas
     # disp0 = midasdisps[:,:,3::8,3::8]
+    # midas depth optimization
+    midasdisps = midasdisps[:,:,3::8,3::8]
+    scale = torch.ones_like(midasdisps)
+
     intrinsics0 = intrinsics / 8.0
 
     # vis_image = images[0].permute(0,2,3,1).cpu().numpy()
@@ -95,7 +99,7 @@ def step(model, item, mode, logger, args, gpu):
         if mode == 'val':
             
             with torch.no_grad():
-                poses_est, disps_est, residuals = model(Gs, Ps, images, disp0, disps, intrinsics0, 
+                poses_est, disps_est, residuals = model(Gs, Ps, images, midasdisps, scale, disps, intrinsics0, 
                     graph, num_steps=args.iters, fixedp=2)
 
                 geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False)
@@ -103,7 +107,7 @@ def step(model, item, mode, logger, args, gpu):
                 flo_loss, flo_metrics = losses.flow_loss(Ps, disps, poses_est, disps_est, intrinsics, graph)
 
         else:
-            poses_est, disps_est, residuals = model(Gs, Ps, images, disp0, disps, intrinsics0, 
+            poses_est, disps_est, residuals = model(Gs, Ps, images, midasdisps, scale, disps, intrinsics0, 
                         graph, num_steps=args.iters, fixedp=2)
 
             geo_loss, geo_metrics = losses.geodesic_loss(Ps, poses_est, graph, do_scale=False)
@@ -114,7 +118,8 @@ def step(model, item, mode, logger, args, gpu):
             loss.backward()
 
         Gs = poses_est[-1].detach()
-        disp0 = disps_est[-1][:,:,3::8,3::8].detach()
+        midasdisps = disps_est[-1][:,:,3::8,3::8].detach()
+        # disp0 = disps_est[-1][:,:,3::8,3::8].detach()
 
     metrics = {}
     metrics.update(geo_metrics)
@@ -229,7 +234,7 @@ def train(gpu, args):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='droid', help='name your experiment')
+    parser.add_argument('--name', default='midas-scale', help='name your experiment')
     parser.add_argument('--ckpt', help='checkpoint to restore', default = False)
     parser.add_argument('--datasets', nargs='+', help='lists of datasets for training')
     parser.add_argument('--datapath', default='/storage/user/lud/lud/dataset/tartanair', help="path to dataset directory")
@@ -264,6 +269,6 @@ if __name__ == '__main__':
         os.mkdir(os.path.join(args.savedir, 'ckpt'))
 
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12356'
+    os.environ['MASTER_PORT'] = '12357'
     mp.spawn(train, nprocs=args.gpus, args=(args,))
 

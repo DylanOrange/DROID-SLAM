@@ -93,7 +93,7 @@ def actp(Gij, X0, jacobian=False):
 
     return X1, None
 
-def projective_transform(poses, depths, intrinsics, ii, jj, jacobian=False, return_depth=False):
+def projective_transform(poses, depths, intrinsics, ii, jj, midasdisps = None, jacobian=False, return_depth=False):
     """ map points from ii->jj """
 
     # inverse project (pinhole)
@@ -119,7 +119,7 @@ def projective_transform(poses, depths, intrinsics, ii, jj, jacobian=False, retu
 
         Jz = Gij[:,:,None,None] * Jz
         Jz = torch.matmul(Jp, Jz.unsqueeze(-1))
-        # Jz = Jz*midasdisps[:,ii,...,None,None]
+        Jz = Jz*midasdisps[:,ii,...,None,None]
 
         return x1, valid, (Ji, Jj, Jz)
 

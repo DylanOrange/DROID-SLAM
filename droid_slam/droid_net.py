@@ -10,7 +10,7 @@ from modules.gru import ConvGRU
 from modules.clipping import GradientClip
 
 from lietorch import SE3, SO3, Sim3
-from geom.ba import BA, MoBA
+from geom.ba import BA, MoBA, midasBA
 
 import geom.projective_ops as pops
 from geom.graph_utils import graph_to_edge_list, keyframe_indicies
@@ -169,7 +169,7 @@ class DroidNet(nn.Module):
         return fmaps, net, inp
 
 
-    def forward(self, Gs, Ps, images, disps, gtdisps, intrinsics, graph=None, num_steps=12, fixedp=2):
+    def forward(self, Gs, Ps, images, midasdisps, scale, gtdisps, intrinsics, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
 
         u = keyframe_indicies(graph)
@@ -185,7 +185,7 @@ class DroidNet(nn.Module):
         ht, wd = images.shape[-2:]
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
         
-        coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+        coords1, _ = pops.projective_transform(Gs, scale*midasdisps, intrinsics, ii, jj)
         target = coords1.clone()
 
         # gtflow, _ = pops.projective_transform(Ps, gtdisps[:,:,3::8,3::8], intrinsics, ii, jj)
@@ -200,13 +200,12 @@ class DroidNet(nn.Module):
         # print('r_err is {}'.format(r_err.item()))
         # print('t_err is {}'.format(t_err.item()))
 
-        # print('-----')
-
         for step in range(num_steps):
             Gs = Gs.detach()
-            disps = disps.detach()
+            midasdisps = midasdisps.detach()
             coords1 = coords1.detach()
             target = target.detach()
+            scale = scale.detach()
 
             # extract motion features
             corr = corr_fn(coords1)
@@ -221,18 +220,15 @@ class DroidNet(nn.Module):
 
             target = coords1 + delta
 
-            # print('predicted weight is {}'.format(weight.mean().item()))
-            # print('predicted flow loss is {}'.format((gtflow - target).abs().mean().item()))
-            # print('predicted flow delta is {}'.format(delta.mean().item()))
-
             for i in range(2):
-                Gs, disps = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
+                # Gs, midasdisps = BA(gtflow, weight, eta, Gs, midasdisps, intrinsics, ii, jj, fixedp=2)
+                Gs, midasdisps, scale = midasBA(target, weight, eta, Gs, midasdisps, scale, intrinsics, ii, jj, fixedp=2)
 
-            coords1, valid_mask = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+            coords1, valid_mask = pops.projective_transform(Gs, scale*midasdisps, intrinsics, ii, jj)
             residual = (target - coords1)
 
             Gs_list.append(Gs)
-            disp_list.append(upsample_disp(disps, upmask))
+            disp_list.append(upsample_disp(scale*midasdisps, upmask))
             residual_list.append(valid_mask * residual)
 
         # print('-----')

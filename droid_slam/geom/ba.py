@@ -40,7 +40,8 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
         poses, disps, intrinsics, ii, jj, jacobian=True)
 
     r = (target - coords).view(B, N, -1, 1)
-    w = .001 * (valid * weight).view(B, N, -1, 1)
+    # print('residual is {}'.format(torch.mean((torch.abs(r)))))
+    w = .001 * (valid*weight).view(B, N, -1, 1)
 
     ### 2: construct linear system ###
     Ji = Ji.reshape(B, N, -1, D)
@@ -89,6 +90,7 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     w = safe_scatter_add_vec(wk, kk, M)
 
     C = C + eta.view(*C.shape) + 1e-7
+    # C = C + 1e-7
 
     H = H.view(B, P, P, D, D)
     E = E.view(B, P, M, D, ht*wd)
@@ -270,20 +272,20 @@ def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1)
 
 #     return poses, objectposes, a, b, midasdisps
 
-def midasBA(target, weight, eta, poses, disps, a, intrinsics, ii, jj, fixedp=1, rig=1):
+def midasBA(target, weight, eta, poses, midasdisps, scale, intrinsics, ii, jj, fixedp=1, rig=1):
     """ Full Bundle Adjustment """
 
-    B, P, ht, wd = disps.shape
+    B, P, ht, wd = midasdisps.shape
     N = ii.shape[0]
     D = poses.manifold_dim
 
     ### 1: commpute jacobians and residuals ###
     coords, valid, (Ji, Jj, Jz) = pops.projective_transform(
-        poses, a*disps, intrinsics, ii, jj, disps, jacobian=True)
+        poses, scale*midasdisps, intrinsics, ii, jj, midasdisps, jacobian=True)
 
     r = (target - coords).view(B, N, -1, 1)
-    print('residual is {}'.format(torch.mean((torch.abs(r)))))
-    w = .001 * (valid).repeat(1,1,1,1,2).view(B, N, -1, 1)
+    # print('residual is {}'.format(torch.mean((torch.abs(r)))))
+    w = .001 * (weight*valid).view(B, N, -1, 1)
 
     ### 2: construct linear system ###
     Ji = Ji.reshape(B, N, -1, D)
@@ -332,6 +334,7 @@ def midasBA(target, weight, eta, poses, disps, a, intrinsics, ii, jj, fixedp=1, 
     w = safe_scatter_add_vec(wk, kk, M)
 
     C = C + eta.view(*C.shape) + 1e-7
+    # C = C + 1e-7
 
     H = H.view(B, P, P, D, D)
     E = E.view(B, P, M, D, ht*wd)
@@ -341,12 +344,12 @@ def midasBA(target, weight, eta, poses, disps, a, intrinsics, ii, jj, fixedp=1, 
     
     ### 4: apply retraction ###
     poses = pose_retr(poses, dx, torch.arange(P) + fixedp)
-    a = a+dz.view(B,-1,ht,wd)
+    scale = scale+dz.view(B,-1,ht,wd)
     # disps = a*disps
     # disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
 
-    disps = torch.where(a*disps > 10, torch.zeros_like(disps), disps)
-    disps = disps.clamp(min=0.0)
-    a = a.clamp(min=0.0)
+    midasdisps = torch.where(scale*midasdisps > 10, torch.zeros_like(midasdisps), midasdisps)
+    midasdisps = midasdisps.clamp(min=0.0)
+    scale = scale.clamp(min=0.0)
 
-    return poses, disps, a
+    return poses, midasdisps, scale
