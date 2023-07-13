@@ -234,13 +234,13 @@ def train(gpu, args):
 
             optimizer.zero_grad()
 
-            # if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
-            #     print('jump train!')
-            #     continue
+            if step(model, item, 'train', logger, skip, save, total_steps, args, gpu):
+                print('jump train!')
+                continue
             
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            # optimizer.step()
-            # scheduler.step()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+            optimizer.step()
+            scheduler.step()
             
             total_steps += 1
 
